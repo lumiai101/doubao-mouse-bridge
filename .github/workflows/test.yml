@@ -1,0 +1,23 @@
+name: Test
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  unit-tests:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          architecture: x64
+      - name: Run offline unit tests
+        run: python -B -I tests/test_bridge.py
+      - name: Check release files
+        run: python -B -I scripts/check_release.py
