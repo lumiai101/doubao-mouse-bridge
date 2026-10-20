@@ -12,8 +12,11 @@ FILES = (
     'THIRD_PARTY_NOTICES.md', 'docs/architecture.md', 'docs/compatibility.md',
     'docs/troubleshooting.md', 'requirements.txt', 'setup.cmd', 'start.cmd',
     'src/doubao_mouse_bridge.py', 'tests/test_bridge.py', 'scripts/check_release.py',
+    'tests/test_callback_latency.py', 'tests/test_physical_fallback.py',
+    'tests/test_native_lifecycle.py',
 )
-SOURCE_SHA256 = '1eafd1a8ac48d8c3c971cc037cf029a32936aec80ca543155a581182826fbe70'
+# 按 LF 计算发布源码指纹，避免 Git 换行转换造成误报；不代表实体验收通过。
+SOURCE_SHA256 = '63d522d69d2394021b32fe7496f1c608fc7afe67047da75a28a124e938d10b85'
 IGNORED_DIRS = {'.git', '.venv', '__pycache__'}
 PATTERNS = {
     '本机用户绝对路径': re.compile(r'(?:[A-Za-z]:[\\/]Users[\\/]|/home/)[A-Za-z0-9_.-]+[\\/]', re.I),
@@ -54,8 +57,8 @@ def inspect_tree():
                 if not (path.parent / target.split('#')[0]).is_file():
                     errors.append(f'文档链接缺失: {name} -> {target}')
     source = ROOT / 'src/doubao_mouse_bridge.py'
-    if source.is_file() and hashlib.sha256(source.read_bytes()).hexdigest() != SOURCE_SHA256:
-        errors.append('运行源与实体验收基线不同，请重新验收并更新记录')
+    if source.is_file() and hashlib.sha256(source.read_text(encoding='utf-8').encode('utf-8')).hexdigest() != SOURCE_SHA256:
+        errors.append('源码与发布指纹不同，请审阅变更、运行测试并更新指纹；指纹不证明实体验收')
     return errors
 
 

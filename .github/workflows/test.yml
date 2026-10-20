@@ -18,6 +18,6 @@ jobs:
           python-version: '3.13'
           architecture: x64
       - name: Run offline unit tests
-        run: python -B -I tests/test_bridge.py
+        run: python -B -I -m unittest discover -s tests -p "test_*.py" -v
       - name: Check release files
         run: python -B -I scripts/check_release.py

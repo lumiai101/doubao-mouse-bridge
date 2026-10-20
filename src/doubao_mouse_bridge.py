@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 import hashlib
 import json
 import logging
+from logging.handlers import RotatingFileHandler
 import os
 from pathlib import Path
 import queue
@@ -201,6 +202,45 @@ class InputState:
         return suppress, actions
 
 
+@dataclass
+class PhysicalHold:
+    shortcut: Shortcut | None = None
+    pressed: set[int] = field(default_factory=set)
+    pending_at: float | None = None
+    active: bool = False
+    blocked: bool = False
+
+    def reset(self, shortcut):
+        self.shortcut = shortcut
+        self.pending_at = None
+        self.blocked = False
+        was_active, self.active = self.active, False
+        return ['stop-fallback'] if was_active else []
+
+    def key(self, vk, down, allowed, now):
+        repeat = down and vk in self.pressed
+        (self.pressed.add if down else self.pressed.discard)(vk)
+        if not self.pressed:
+            self.blocked = False
+        if self.shortcut and down and vk not in MOD_VKS | {self.shortcut.main}:
+            self.blocked = True
+        if self.blocked or not allowed or not self.shortcut or not self.shortcut.matches(self.pressed):
+            self.pending_at = None
+            if self.active:
+                self.active = False
+                return ['stop-fallback']
+        elif down and not repeat and not self.active and self.pending_at is None:
+            self.pending_at = now
+        return []
+
+    def tick(self, now):
+        if self.pending_at is not None and now - self.pending_at >= 0.6:
+            self.pending_at = None
+            self.active = True
+            return ['start-fallback']
+        return []
+
+
 class GUID(ctypes.Structure):
     _fields_ = [('Data1', w.DWORD), ('Data2', w.WORD), ('Data3', w.WORD), ('Data4', ctypes.c_ubyte * 8)]
 
@@ -259,8 +299,10 @@ class NativeVoice:
         self.pipe = rb'\\.\pipe\ObricIme\oime-server'
         self.dll.RpcPipe_SimpleMessage.argtypes = [ctypes.c_char_p, ctypes.c_int, ctypes.c_int, ctypes.c_int]
         self.dll.RpcPipe_SimpleMessage.restype = ctypes.c_int
-        self.dll.RpcPipe_FocusIn.argtypes = [ctypes.c_char_p]
+        self.dll.RpcPipe_FocusIn.argtypes = [ctypes.c_char_p, ctypes.c_char_p]
         self.dll.RpcPipe_FocusIn.restype = None
+        self.dll.RpcPipe_FocusOut.argtypes = [ctypes.c_char_p]
+        self.dll.RpcPipe_FocusOut.restype = None
         self.dll.RpcPipe_RegisterTsfNotifySink.argtypes = [ctypes.c_char_p, w.HWND, ctypes.c_uint64]
         self.dll.RpcPipe_RegisterTsfNotifySink.restype = None
         self.dll.RpcPipe_UnregisterTsfNotifySink.argtypes = [ctypes.c_char_p, w.HWND, ctypes.c_uint64]
@@ -277,8 +319,10 @@ class NativeVoice:
 
     def detach(self):
         if self.sink:
+            self.dll.RpcPipe_FocusOut(self.pipe)
             self.dll.RpcPipe_UnregisterTsfNotifySink(self.pipe, self.sink, 1)
             self.sink = None
+            logging.info('已释放本程序原生焦点与TSF通知')
 
     def call(self, code, a=0):
         result = self.dll.RpcPipe_SimpleMessage(self.pipe, code, a, 0)
@@ -291,7 +335,7 @@ class NativeVoice:
             if current != 0:
                 raise RuntimeError('已有语音会话，不接管')
             self.owned = False
-            self.dll.RpcPipe_FocusIn(self.pipe)
+            self.dll.RpcPipe_FocusIn(self.pipe, None)
             if self.call(1004):
                 raise RuntimeError('豆包语音激活失败')
             self.owned = True
@@ -319,6 +363,105 @@ class NativeVoice:
             logging.warning('结果仍由豆包处理，不丢弃、不重复启动')
 
 
+def native_session(connection, install):
+    logging.basicConfig(handlers=[RotatingFileHandler(Path(__file__).with_suffix('.log'),
+                        maxBytes=1048576, backupCount=2, encoding='utf-8')], level=logging.INFO,
+                        format='%(asctime)s %(levelname)s %(message)s')
+    user = ctypes.WinDLL('user32', use_last_error=True)
+    user.CreateWindowExW.argtypes = [w.DWORD, w.LPCWSTR, w.LPCWSTR, w.DWORD,
+                                    ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
+                                    w.HWND, w.HMENU, w.HINSTANCE, w.LPVOID]
+    user.CreateWindowExW.restype = w.HWND
+    user.DestroyWindow.argtypes = [w.HWND]
+    user.PeekMessageW.argtypes = [ctypes.POINTER(w.MSG), w.HWND, w.UINT, w.UINT, w.UINT]
+    user.DispatchMessageW.argtypes = [ctypes.POINTER(w.MSG)]
+    hwnd = user.CreateWindowExW(0, 'STATIC', 'DoubaoVoiceSession', 0, 0, 0, 0, 0,
+                                w.HWND(-3), None, None, None)
+    if not hwnd:
+        raise ctypes.WinError(ctypes.get_last_error())
+    native = NativeVoice(install)
+    finished = threading.Event()
+
+    def commands():
+        try:
+            while True:
+                action = connection.recv()
+                try:
+                    if action == 'start-fallback':
+                        if native.call(1006) != 0:
+                            connection.send((True, True, ''))
+                            return
+                        action = 'start'
+                    if action == 'start' and not native.sink:
+                        native.attach(hwnd)
+                    native.command(action)
+                    ending = action in ('stop', 'cancel') and not native.owned
+                    connection.send((True, ending, ''))
+                    if ending:
+                        return
+                except Exception as exc:
+                    try:
+                        native.command('cancel')
+                    finally:
+                        connection.send((False, True, str(exc)))
+                    return
+        except EOFError:
+            if native.owned:
+                native.command('cancel')
+        finally:
+            finished.set()
+
+    threading.Thread(target=commands, daemon=True).start()
+
+    message = w.MSG()
+    try:
+        while not finished.wait(0.01):
+            while user.PeekMessageW(ctypes.byref(message), None, 0, 0, 1):
+                user.TranslateMessage(ctypes.byref(message))
+                user.DispatchMessageW(ctypes.byref(message))
+    finally:
+        native.detach()
+        user.DestroyWindow(hwnd)
+        connection.close()
+
+
+class VoiceSession:
+    def __init__(self, install):
+        self.install = str(install)
+        self.process = None
+        self.connection = None
+
+    def command(self, action):
+        import multiprocessing
+        if self.process is None:
+            if action not in ('start', 'start-fallback'):
+                return False
+            context = multiprocessing.get_context('spawn')
+            self.connection, child = context.Pipe()
+            self.process = context.Process(target=native_session, args=(child, self.install), daemon=True)
+            self.process.start()
+            child.close()
+        self.connection.send(action)
+        if not self.connection.poll(25):
+            self.process.terminate()
+            self.process.join(2)
+            self.connection.close()
+            self.process = None
+            raise RuntimeError('豆包接口响应超时，语音子进程已结束；请检查豆包是否仍在录音')
+        success, ending, error = self.connection.recv()
+        if ending:
+            self.process.join(3)
+            if self.process.is_alive():
+                self.process.terminate()
+                self.process.join(2)
+            self.connection.close()
+            self.process = None
+            logging.info('本次语音子进程已退出，原生连接已释放')
+        if not success:
+            raise RuntimeError(error)
+        return not ending
+
+
 def find_install():
     base = Path(os.environ.get('ProgramFiles', 'C:/Program Files')) / 'DoubaoIME' / 'versions'
     candidates = sorted(base.glob('v*'), key=lambda p: tuple(int(n) for n in p.name[1:].split('.')), reverse=True)
@@ -333,12 +476,29 @@ def main():
     from pynput import keyboard
     parser = argparse.ArgumentParser(description='只读跟随豆包快捷键的罗技模拟键适配')
     parser.add_argument('--config', default=str(Path(os.environ['APPDATA']) / 'DoubaoIme/conf/config.json'))
+    parser.add_argument('--background', action='store_true', help='后台运行，不显示控制窗口')
+    parser.add_argument('--stop', action='store_true', help='请求正在运行的适配正常退出')
     args = parser.parse_args()
-    logging.basicConfig(filename=Path(__file__).with_suffix('.log'), level=logging.INFO,
-                        encoding='utf-8', format='%(asctime)s %(levelname)s %(message)s')
+    logging.basicConfig(handlers=[RotatingFileHandler(Path(__file__).with_suffix('.log'),
+                        maxBytes=1048576, backupCount=2, encoding='utf-8')], level=logging.INFO,
+                        format='%(asctime)s %(levelname)s %(message)s')
     kernel = ctypes.WinDLL('kernel32', use_last_error=True)
     kernel.CreateMutexW.argtypes = [w.LPVOID, w.BOOL, w.LPCWSTR]
     kernel.CreateMutexW.restype = w.HANDLE
+    kernel.CloseHandle.argtypes = [w.HANDLE]
+    kernel.CreateEventW.argtypes = [w.LPVOID, w.BOOL, w.BOOL, w.LPCWSTR]
+    kernel.CreateEventW.restype = w.HANDLE
+    kernel.OpenEventW.argtypes = [w.DWORD, w.BOOL, w.LPCWSTR]
+    kernel.OpenEventW.restype = w.HANDLE
+    kernel.SetEvent.argtypes = [w.HANDLE]
+    kernel.WaitForSingleObject.argtypes = [w.HANDLE, w.DWORD]
+    stop_name = r'Local\DoubaoMouseVoiceBridgeStop'
+    if args.stop:
+        handle = kernel.OpenEventW(2, False, stop_name)
+        if handle:
+            kernel.SetEvent(handle)
+            kernel.CloseHandle(handle)
+        return
     instance = kernel.CreateMutexW(None, False, r'Local\DoubaoMouseVoiceBridge')
     instance_error = ctypes.get_last_error()
     if not instance:
@@ -348,15 +508,23 @@ def main():
         kernel.CloseHandle(instance)
         logging.info('适配已经运行，未重复安装监听')
         return
+    stop_event = kernel.CreateEventW(None, True, False, stop_name)
+    if not stop_event:
+        raise ctypes.WinError(ctypes.get_last_error())
+    kernel.OpenProcess.argtypes = [w.DWORD, w.BOOL, w.DWORD]
+    kernel.OpenProcess.restype = w.HANDLE
+    kernel.QueryFullProcessImageNameW.argtypes = [w.HANDLE, w.DWORD, w.LPWSTR, ctypes.POINTER(w.DWORD)]
     logging.info('启动 pid=%s', os.getpid())
     user = ctypes.WinDLL('user32', use_last_error=True)
     user.GetForegroundWindow.restype = w.HWND
     user.GetWindowThreadProcessId.argtypes = [w.HWND, ctypes.POINTER(w.DWORD)]
     user.GetAsyncKeyState.argtypes = [ctypes.c_int]
-    native = NativeVoice(find_install())
+    native = VoiceSession(find_install())
     profile = DoubaoProfile()
     state = InputState(Bindings(None, None))
+    physical = PhysicalHold()
     lock = threading.RLock()
+    physical_events = queue.SimpleQueue()
     jobs = queue.Queue()
     errors = queue.Queue()
     closing = threading.Event()
@@ -368,18 +536,19 @@ def main():
     ui = tk.Tk()
     ui.title('豆包鼠标语音适配')
     ui.geometry('570x175')
+    if args.background:
+        ui.withdraw()
     ui.update_idletasks()
-    native.attach(ui.winfo_id())
     text = tk.StringVar(value='正在读取豆包设置')
     tk.Label(ui, textvariable=text, wraplength=540, justify='left', padx=12, pady=12).pack(fill='x')
     tk.Label(ui, text='只接管匹配设置的模拟快捷键。实体键盘透传。退出立即停用。').pack()
 
     def send(actions):
         for action in actions:
-            logging.info('会话命令 %s', action)
-            jobs.put(action)
+            jobs.put_nowait(action)
 
     def worker():
+        fallback_owned = False
         while True:
             action = jobs.get()
             try:
@@ -389,7 +558,20 @@ def main():
                     except Exception:
                         logging.exception('退出时语音取消失败')
                     return
-                native.command(action)
+                logging.info('会话命令 %s', action)
+                if action == 'start-fallback':
+                    if native.process is None:
+                        fallback_owned = native.command(action)
+                elif action == 'stop-fallback':
+                    if fallback_owned:
+                        native.command('stop')
+                        fallback_owned = False
+                else:
+                    if action == 'start' and native.process is not None:
+                        continue
+                    native.command(action)
+                    if action in ('stop', 'cancel'):
+                        fallback_owned = False
             except Exception as exc:
                 logging.exception('语音命令失败')
                 errors.put(str(exc))
@@ -407,10 +589,20 @@ def main():
             vk = 0xA1 if data.scanCode == 0x36 else 0xA0
         elif vk in (0x11, 0x12):
             vk = (0xA3 if vk == 0x11 else 0xA5) if data.flags & 1 else (0xA2 if vk == 0x11 else 0xA4)
+        if not injected:
+            if vk not in MOD_VKS and (not physical.shortcut or vk != physical.shortcut.main):
+                physical_events.put((vk, msg in (0x100, 0x104)))
+                return False
+            with lock:
+                if closing.is_set():
+                    return False
+                send(physical.key(vk, msg in (0x100, 0x104), allowed and not paused, time.monotonic()))
+            if vk not in MOD_VKS:
+                return False
         with lock:
+            if closing.is_set():
+                return False
             suppressed, actions = state.key(vk, msg in (0x100, 0x104), injected, allowed and not paused, time.monotonic())
-            if injected and any(spec and (vk == spec.main or not spec.main and vk in spec.sides) for spec in (state.bindings.hold, state.bindings.toggle)):
-                logging.info('匹配候选 vk=%s down=%s allowed=%s paused=%s suppress=%s', vk, msg in (0x100, 0x104), allowed, paused, suppressed)
             send(actions)
         if suppressed:
             listener.suppress_event()
@@ -423,6 +615,7 @@ def main():
     def reset(bindings):
         with lock:
             send(state.reset(bindings))
+            send(physical.reset(bindings.hold))
 
     def toggle_pause():
         nonlocal paused
@@ -440,18 +633,20 @@ def main():
         nonlocal allowed
         if closing.is_set():
             return
-        allowed = False
-        closing.set()
+        with lock:
+            allowed = False
+            closing.set()
+            jobs.put_nowait('exit')
         listener.stop()
-        jobs.put('exit')
         text.set('正在结束本程序的语音会话并卸载监听')
         poll_exit()
 
     def poll_exit():
         if jobs.unfinished_tasks == 0:
-            logging.info('正常退出')
-            native.detach()
+            logging.info('适配已退出；原生停止失败时须核对豆包麦克风状态')
             profile.close()
+            kernel.CloseHandle(stop_event)
+            kernel.CloseHandle(instance)
             ui.destroy()
         else:
             ui.after(50, poll_exit)
@@ -467,6 +662,9 @@ def main():
         nonlocal fingerprint, allowed, target, profile, failure
         if closing.is_set():
             return
+        if kernel.WaitForSingleObject(stop_event, 0) == 0:
+            shutdown()
+            return
         try:
             stat = Path(args.config).stat()
             current = stat.st_mtime_ns, stat.st_size
@@ -480,37 +678,48 @@ def main():
             hwnd = user.GetForegroundWindow()
             pid = w.DWORD()
             user.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
-            import subprocess
-            setting_pids = getattr(tick, 'setting_pids', set())
-            if time.monotonic() - getattr(tick, 'last_pid_check', 0) > 2:
-                output = subprocess.run(['tasklist', '/FI', 'IMAGENAME eq DoubaoImeSettings.exe', '/FO', 'CSV', '/NH'],
-                                        capture_output=True, creationflags=0x08000000, check=True).stdout
-                import csv
-                setting_pids = {int(row[1]) for row in csv.reader(output.decode('mbcs').splitlines())
-                                if len(row) > 1 and row[1].isdigit()}
-                tick.setting_pids, tick.last_pid_check = setting_pids, time.monotonic()
+            if getattr(tick, 'foreground_pid', None) != pid.value:
+                image = ''
+                process = kernel.OpenProcess(0x1000, False, pid.value)
+                if process:
+                    try:
+                        buffer = ctypes.create_unicode_buffer(32768)
+                        size = w.DWORD(len(buffer))
+                        if kernel.QueryFullProcessImageNameW(process, 0, buffer, ctypes.byref(size)):
+                            image = Path(buffer.value).name.lower()
+                    finally:
+                        kernel.CloseHandle(process)
+                tick.foreground_pid = pid.value
+                tick.settings_foreground = image == 'doubaoimesettings.exe'
             if getattr(tick, 'profile_foreground', None) != hwnd:
                 replacement = DoubaoProfile()
                 profile.close()
                 profile = replacement
                 tick.profile_foreground = hwnd
             is_doubao = profile.active()
-            allowed = bool(hwnd) and pid.value not in setting_pids and pid.value != os.getpid() and is_doubao
+            allowed = bool(hwnd) and not tick.settings_foreground and pid.value != os.getpid() and is_doubao
             gate = (pid.value, is_doubao, allowed)
             if getattr(tick, 'gate', None) != gate:
                 logging.info('输入门控 pid=%s doubao=%s allowed=%s', *gate)
                 tick.gate = gate
             with lock:
+                while not physical_events.empty():
+                    vk, down = physical_events.get_nowait()
+                    send(physical.key(vk, down, allowed and not paused, time.monotonic()))
                 if target and hwnd != target and state.active:
                     send(state.reset(state.bindings))
-                if state.pending or state.active:
+                if target and hwnd != target and (physical.active or physical.pending_at is not None):
+                    send(physical.reset(physical.shortcut))
+                if state.pending or state.active or physical.active or physical.pending_at is not None:
                     target = target or hwnd
                 else:
                     target = 0
                 if not allowed or paused:
                     send(state.reset(state.bindings))
+                    send(physical.reset(physical.shortcut))
                 else:
                     send(state.tick(time.monotonic()))
+                    send(physical.tick(time.monotonic()))
             if not listener.is_alive():
                 raise RuntimeError('输入监听已停止')
             if not errors.empty():
