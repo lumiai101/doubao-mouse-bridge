@@ -16,7 +16,7 @@ FILES = (
     'tests/test_native_lifecycle.py',
 )
 # 按 LF 计算发布源码指纹，避免 Git 换行转换造成误报；不代表实体验收通过。
-SOURCE_SHA256 = '63d522d69d2394021b32fe7496f1c608fc7afe67047da75a28a124e938d10b85'
+SOURCE_SHA256 = 'a89f8c5e1720fa6ab3d76496e156552dc4d55a26e4fd25243f778d3f6ffd4bb9'
 IGNORED_DIRS = {'.git', '.venv', '__pycache__'}
 PATTERNS = {
     '本机用户绝对路径': re.compile(r'(?:[A-Za-z]:[\\/]Users[\\/]|/home/)[A-Za-z0-9_.-]+[\\/]', re.I),

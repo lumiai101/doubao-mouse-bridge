@@ -6,8 +6,8 @@
 |---|---|
 | 操作系统 | Windows 10 Home x64，10.0.19045 |
 | Python | CPython 3.13.12 x64 |
-| 豆包输入法 | v0.9.2.7，schemaVersion 12 |
-| 本地接口 | `rpc.dll` SHA-256 `bc3d6fb5dbfa36161c9a6afddb3bde0c4937ee3a3a08bec1ddde71801710b11e` |
+| 豆包输入法 | v0.9.2.7、v0.9.3.19，schemaVersion 12 |
+| 本地接口 | `rpc.dll` SHA-256 白名单：<br>- v0.9.2.7: `bc3d6fb5dbfa36161c9a6afddb3bde0c4937ee3a3a08bec1ddde71801710b11e`<br>- v0.9.3.19: `b1a609d662d807537f366b5c8d33ab20eba2701c0e207f67a0f664ea9a2c42d5` |
 | 依赖 | pynput 1.8.2、six 1.17.0 |
 | 鼠标软件 | Logi Options+，具体版本未在公开验收摘要中记录 |
 | 实体设备 | 一台罗技鼠标；不据此承诺所有罗技型号 |
