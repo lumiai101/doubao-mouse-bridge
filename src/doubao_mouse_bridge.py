@@ -22,6 +22,10 @@ GROUPS = {1: frozenset((0xA4, 0xA5)), 2: frozenset((0xA2, 0xA3)),
           4: frozenset((0xA0, 0xA1)), 8: frozenset((0x5B, 0x5C))}
 MOD_VKS = frozenset(vk for vk, _ in MODIFIERS.values())
 RPC_SHA256 = 'bc3d6fb5dbfa36161c9a6afddb3bde0c4937ee3a3a08bec1ddde71801710b11e'
+ALLOWED_RPC_SHA256 = frozenset({
+    'bc3d6fb5dbfa36161c9a6afddb3bde0c4937ee3a3a08bec1ddde71801710b11e',  # v0.9.2.7
+    'b1a609d662d807537f366b5c8d33ab20eba2701c0e207f67a0f664ea9a2c42d5',  # v0.9.3.19
+})
 
 
 @dataclass(frozen=True)
@@ -292,7 +296,7 @@ class DoubaoProfile:
 class NativeVoice:
     def __init__(self, install):
         self.directory = Path(install)
-        if hashlib.sha256((self.directory / 'rpc.dll').read_bytes()).hexdigest() != RPC_SHA256:
+        if hashlib.sha256((self.directory / 'rpc.dll').read_bytes()).hexdigest() not in ALLOWED_RPC_SHA256:
             raise RuntimeError('豆包原生接口版本已变化，未启用')
         self.search = os.add_dll_directory(str(self.directory))
         self.dll = ctypes.CDLL(str(self.directory / 'rpc.dll'))
