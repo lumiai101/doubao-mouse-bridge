@@ -183,6 +183,74 @@ class NativeVoiceTests(unittest.TestCase):
         client.call = call
         return client
 
+    def start_client(self, states):
+        from unittest.mock import MagicMock
+        client = self.client(states)
+        client.owned = False
+        client.dll = MagicMock()
+        client.pipe = b'test'
+        return client
+
+    def test_start_acknowledged_but_idle_is_not_success(self):
+        client = self.start_client([0] * 100)
+        with patch.object(m.time, 'sleep'), patch.object(m.time, 'monotonic', side_effect=range(100)):
+            with self.assertRaisesRegex(RuntimeError, '未确认.*录音'):
+                client.command('start')
+        self.assertFalse(client.owned)
+        for code in (1004, 1007, 1012, 1013):
+            self.assertEqual(client.calls.count(code), 1)
+
+    def test_start_waits_for_observed_recording_state(self):
+        client = self.start_client([0, 0, 0, 3])
+        with patch.object(m.time, 'sleep'), patch.object(m.time, 'monotonic', return_value=0):
+            client.command('start')
+        self.assertTrue(client.owned)
+        self.assertEqual(client.calls, [1006, 1004, 1007, 1012, 1006, 1006, 1006])
+        client.dll.RpcPipe_FocusIn.assert_called_once_with(client.pipe, None)
+
+    def test_processing_unknown_and_error_states_do_not_confirm_start(self):
+        for state in (1, 2, 4, 8, 19, 22, 50, -1, 99):
+            with self.subTest(state=state):
+                client = self.start_client([0] + [state] * 100)
+                with patch.object(m.time, 'sleep'), patch.object(m.time, 'monotonic', side_effect=range(100)):
+                    with self.assertRaisesRegex(RuntimeError, '未确认.*录音'):
+                        client.command('start')
+                self.assertFalse(client.owned)
+                self.assertEqual(client.calls.count(1007), 1)
+
+    def test_start_does_not_take_over_existing_voice(self):
+        client = self.start_client([3])
+        with self.assertRaisesRegex(RuntimeError, '已有语音'):
+            client.command('start')
+        self.assertEqual(client.calls, [1006])
+        client.dll.RpcPipe_FocusIn.assert_not_called()
+
+    def test_failed_start_cleanup_keeps_original_error(self):
+        client = self.start_client([0] * 100)
+        original_call = client.call
+        def call(code, a=0):
+            result = original_call(code, a)
+            return 1 if code == 1013 else result
+        client.call = call
+        with patch.object(m.time, 'sleep'), patch.object(m.time, 'monotonic', side_effect=range(100)):
+            with self.assertRaisesRegex(RuntimeError, '未确认.*录音.*取消失败'):
+                client.command('start')
+        self.assertTrue(client.owned)
+
+    def test_start_failure_reply_is_reaped_not_returned_active(self):
+        from unittest.mock import MagicMock
+        session = m.VoiceSession('unused')
+        process = session.process = MagicMock()
+        process.is_alive.return_value = False
+        connection = session.connection = MagicMock()
+        connection.poll.return_value = True
+        connection.recv.return_value = (False, True, '启动后未确认进入录音状态')
+        with self.assertRaisesRegex(RuntimeError, '未确认.*录音'):
+            session.command('start')
+        self.assertIsNone(session.process)
+        process.join.assert_called_once_with(3)
+        connection.close.assert_called_once_with()
+
     def test_pending_state_is_not_discarded(self):
         client = self.client([8, 8, 0])
         with patch.object(m.time, 'sleep'):

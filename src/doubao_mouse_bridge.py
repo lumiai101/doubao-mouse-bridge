@@ -304,7 +304,7 @@ class InputState:
         self.started_at = now
         return ['start']
 
-    def key(self, vk, down, injected, allowed, now):
+    def key(self, vk, down, injected, allowed, now, voice_enabled=True):
         if not injected:
             if vk in MOD_VKS:
                 (self.physical_modifiers.add if down else self.physical_modifiers.discard)(vk)
@@ -317,6 +317,18 @@ class InputState:
         if not down:
             self.swallowed.discard(vk)
         actions = []
+        if not voice_enabled:
+            # 故障锁存只保留已匹配模拟键的吞键，不建立任何语音会话。
+            self.pending = None
+            self.active = None
+            if allowed and down and not repeat:
+                for spec in (self.bindings.hold, self.bindings.toggle):
+                    if (spec and spec.matches(self.pressed | self.physical_modifiers)
+                            and (vk == spec.main if spec.main else vk in MOD_VKS)):
+                        self.swallowed.add(vk)
+                        suppress = True
+                        break
+            return suppress, []
         if not allowed:
             self.pending = None
             if self.active:
@@ -513,8 +525,19 @@ class NativeVoice:
             try:
                 if self.call(1007) or self.call(1012, 1):
                     raise RuntimeError('豆包语音启动失败')
-            except Exception:
-                self.command('cancel')
+                deadline = time.monotonic() + 3
+                while True:
+                    current = self.call(1006)
+                    if current == 3:
+                        break
+                    if time.monotonic() >= deadline:
+                        raise RuntimeError(f'豆包启动后未确认进入录音状态 (state={current})；请核对豆包与系统麦克风提示，禁止自动重试')
+                    time.sleep(0.1)
+            except Exception as exc:
+                try:
+                    self.command('cancel')
+                except Exception as cleanup:
+                    raise RuntimeError(f'{exc}；取消失败: {cleanup}；请手动核对麦克风状态') from exc
                 raise
         elif action in ('stop', 'cancel') and self.owned:
             if action == 'cancel':
@@ -941,8 +964,9 @@ def main():
         tray_fallback()
 
     def send(actions):
-        for action in actions:
-            jobs.put_nowait(action)
+        if not native_fault.is_set():
+            for action in actions:
+                jobs.put_nowait(action)
 
     def worker():
         fallback_owned = False
@@ -1022,7 +1046,8 @@ def main():
             foreground_changed = bool(target and foreground != target)
             if foreground_changed:
                 send(state.reset(state.bindings))
-            suppressed, actions = state.key(vk, down, injected, allowed and not foreground_changed and not paused and not native_fault.is_set(), time.monotonic())
+            suppressed, actions = state.key(vk, down, injected, allowed and not foreground_changed and not paused,
+                                            time.monotonic(), voice_enabled=not native_fault.is_set())
             if injected and down and suppressed:
                 # 只记已经因本次匹配而隐藏主键的修饰键；未匹配组合仍完整透传。
                 state.menu_modifiers.update((state.pressed & MENU_MODIFIERS) - state.swallowed)
@@ -1158,11 +1183,8 @@ def main():
 
         if not tray_failed and not tray_ready.is_set() and time.monotonic() - tray_started_at > 3:
             tray_fallback()
+        voice_fault_only = False
         try:
-            if native_fault.is_set():
-                if not errors.empty():
-                    failure = errors.get_nowait()
-                raise RuntimeError(failure or '豆包录音状态未确认，请先核对麦克风')
             if not listener.is_alive():
                 raise RuntimeError('输入监听已停止')
             while not side_results.empty():
@@ -1172,7 +1194,7 @@ def main():
                     fingerprint = None
             stat = Path(args.config).stat()
             current = stat.st_mtime_ns, stat.st_size
-            if current != fingerprint or failure is not None:
+            if current != fingerprint or (failure is not None and not native_fault.is_set()):
                 bindings = read_bindings(args.config)
                 if bindings != state.bindings:
                     reset(bindings)
@@ -1209,11 +1231,17 @@ def main():
                 profile = replacement
                 tick.profile_foreground = hwnd
             is_doubao = profile.active()
-            allowed = bool(hwnd) and not tick.settings_foreground and pid.value != os.getpid() and is_doubao and not native_fault.is_set()
+            # 前台门控与录音许可分离：故障后仍只在豆包前台吞已配置模拟组合。
+            allowed = bool(hwnd) and not tick.settings_foreground and pid.value != os.getpid() and is_doubao
             gate = (pid.value, is_doubao, allowed)
             if getattr(tick, 'gate', None) != gate:
                 logging.info('输入门控 pid=%s doubao=%s allowed=%s', *gate)
                 tick.gate = gate
+            if native_fault.is_set():
+                voice_fault_only = True
+                if not errors.empty():
+                    failure = errors.get_nowait()
+                raise RuntimeError(failure or '豆包录音状态未确认，请先核对麦克风')
             with lock:
                 while not physical_events.empty():
                     vk, down = physical_events.get_nowait()
@@ -1237,13 +1265,20 @@ def main():
             if native_fault.is_set():
                 raise RuntimeError(errors.get_nowait() if not errors.empty() else '豆包录音状态未确认')
         except Exception as exc:
-            allowed = False
-            reset(Bindings(None, None))
+            if voice_fault_only:
+                reset(state.bindings)
+                target = 0
+            else:
+                # 配置损坏、监听停止等错误不能沿用旧快捷键继续吞键。
+                allowed = False
+                fingerprint = None
+                reset(Bindings(None, None))
             curr_exc = str(exc)
             side_var.set('当前适配检查失败，侧键匹配状态暂未确认；请先查看下方故障提示。')
             if native_fault.is_set():
                 status_var.set('适配状态: 录音状态未确认 (需要处理)')
-                diag_var.set(f'故障警示: {curr_exc}\n已停用新触发并禁止自动重试。请在豆包核对麦克风状态后，点击“重新检查”确认恢复。')
+                guard_note = '豆包前台仍屏蔽已配置的模拟语音组合；暂停或切换输入法后透传。' if voice_fault_only else '当前未拦截新按键。'
+                diag_var.set(f'故障警示: {curr_exc}\n已停用语音命令并禁止自动重试。{guard_note}请在豆包核对麦克风状态后，点击“重新检查”确认恢复。')
                 update_tray_state('录音状态未确认', 'unconfirmed')
             else:
                 status_var.set('适配状态: 需要处理')
