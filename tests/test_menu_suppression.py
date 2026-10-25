@@ -8,6 +8,9 @@ import sys
 import threading
 import types
 import unittest
+from unittest.mock import MagicMock
+import tempfile
+import json
 
 SOURCE = Path(__file__).resolve().parents[1] / 'src/doubao_mouse_bridge.py'
 spec = importlib.util.spec_from_file_location('bridge_menu_test', SOURCE)
@@ -104,6 +107,60 @@ def naked_menu_releases(events):
 
 
 class MenuSuppressionTests(unittest.TestCase):
+    def test_fault_swallows_repeated_configured_trigger_without_voice_commands(self):
+        replay = HookReplay(m.Bindings(None, m.Shortcut(0xDD, frozenset({0x5B}))))
+        replay.ns['native_fault'].set()
+        cycle = [key(0x5B, True), key(0xDD, True), key(0xDD, False), key(0x5B, False)]
+        visible = replay.replay(cycle * 3)
+        self.assertNotIn((0xDD, True), visible)
+        self.assertNotIn((0xDD, False), visible)
+        self.assertEqual(naked_menu_releases(visible), [])
+        self.assertEqual(replay.drain_jobs(), [])
+        self.assertIsNone(replay.state.active)
+        self.assertIsNone(replay.state.pending)
+        self.assertEqual(replay.state.tick(m.time.monotonic() + 1), [])
+
+    def test_fault_does_not_capture_outside_doubao_paused_physical_or_unmatched_keys(self):
+        cycle = [key(0x5B, True), key(0xDD, True), key(0xDD, False), key(0x5B, False)]
+        for change in ('outside', 'paused', 'physical', 'unmatched', 'closing', 'invalid_config'):
+            with self.subTest(change=change):
+                replay = HookReplay(m.Bindings(None, m.Shortcut(0xDD, frozenset({0x5B}))))
+                replay.ns['native_fault'].set()
+                events = cycle
+                if change == 'outside':
+                    replay.ns['allowed'] = False
+                elif change == 'paused':
+                    replay.ns['paused'] = True
+                elif change == 'physical':
+                    events = [key(e[0], e[1], 0) for e in cycle]
+                elif change == 'unmatched':
+                    events = [key(65 if e[0] == 0xDD else e[0], e[1]) for e in cycle]
+                elif change == 'closing':
+                    replay.ns['closing'].set()
+                else:
+                    replay.state.reset(m.Bindings(None, None))
+                self.assertEqual(replay.replay(events), [(e[0], e[1]) for e in events])
+                self.assertEqual(replay.drain_jobs(), [])
+                self.assertEqual(replay.sent, [])
+
+    def test_fault_modifier_only_hold_never_arms_or_starts(self):
+        replay = HookReplay(m.Bindings(m.Shortcut(0, frozenset({0xA5})), None))
+        replay.ns['native_fault'].set()
+        self.assertEqual(replay.replay([key(0xA5, True), key(0xA5, False)]), [])
+        self.assertIsNone(replay.state.pending)
+        self.assertIsNone(replay.state.active)
+        self.assertEqual(replay.drain_jobs(), [])
+
+    def test_fault_and_foreground_change_do_not_enqueue_cancel(self):
+        replay = HookReplay(m.Bindings(None, m.Shortcut(0xDD, frozenset({0x5B}))))
+        replay.replay([key(0x5B, True), key(0xDD, True)])
+        self.assertEqual(replay.drain_jobs(), ['start'])
+        replay.ns['native_fault'].set()
+        replay.GetForegroundWindow = lambda: 200
+        replay.replay([key(0xDD, False), key(0x5B, False)])
+        self.assertEqual(replay.drain_jobs(), [])
+        self.assertIsNone(replay.state.active)
+
     def test_matched_win_combo_does_not_become_bare_win_in_one_batch(self):
         replay = HookReplay(m.Bindings(None, m.Shortcut(0xDD, frozenset({0x5B}))))
         visible = replay.replay([key(0x5B, True), key(0xDD, True),
@@ -226,6 +283,79 @@ class MenuSuppressionTests(unittest.TestCase):
         replay = HookReplay(m.Bindings(None, m.Shortcut(0, frozenset({0xA5}))))
         self.assertEqual(replay.replay([key(0xA5, True), key(0xA5, False)]), [])
         self.assertFalse(replay.sent)
+
+
+class FaultTickTests(unittest.TestCase):
+    """真实 tick + 真实回调，Windows/Tk/语音仅用内存替身，不录音。"""
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.config = Path(self.directory.name) / 'config.json'
+        self.config.write_text(json.dumps({'schemaVersion': 12, 'voice': {
+            'voiceLongPressShortcut': {'keyCode': 0, 'modifierFlags': 2049},
+            'voiceShortcut': {'keyCode': 0xDD, 'modifierFlags': 16392}}}), encoding='utf-8')
+        self.replay = HookReplay(m.Bindings(None, None))
+        self.ns = self.replay.ns
+        self.ns['native_fault'].set()
+        self.ns['listener'].is_alive = lambda: True
+        self.profile = MagicMock()
+        self.profile.active.return_value = True
+        self.ns.update(args=types.SimpleNamespace(config=str(self.config)), fingerprint=None,
+                       target=0, failure=None, side_buttons=[], side_results=m.queue.SimpleQueue(),
+                       errors=m.queue.Queue(), profile=self.profile, DoubaoProfile=lambda: self.profile,
+                       kernel=MagicMock(), stop_event=1, show_event=2, tray_queue=m.queue.SimpleQueue(),
+                       tray_failed=True, tray_ready=threading.Event(), tray_started_at=0,
+                       ui=MagicMock(), status_var=MagicMock(), hold_var=MagicMock(),
+                       toggle_var=MagicMock(), side_var=MagicMock(), diag_var=MagicMock(),
+                       update_tray_state=MagicMock())
+        self.ns['kernel'].WaitForSingleObject.return_value = 1
+        self.ns['kernel'].OpenProcess.return_value = 0
+        self.replay.GetWindowThreadProcessId = lambda hwnd, ptr: setattr(ptr._obj, 'value', 123)
+        tree = ast.parse(SOURCE.read_text(encoding='utf-8'))
+        main = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == 'main')
+        functions = [n for n in main.body if isinstance(n, ast.FunctionDef) and n.name in ('send', 'reset', 'tick')]
+        for fn in functions:
+            fn.body = [ast.Global(names=n.names) if isinstance(n, ast.Nonlocal) else n for n in fn.body]
+        exec(compile(ast.fix_missing_locations(ast.Module(body=functions, type_ignores=[])),
+                     str(SOURCE), 'exec'), self.ns)
+
+    def cycle(self):
+        return [key(0x5B, True), key(0xDD, True), key(0xDD, False), key(0x5B, False)]
+
+    def test_fault_tick_retains_valid_binding_and_still_refreshes_foreground(self):
+        self.ns['target'] = 999
+        self.ns['tick']()
+        self.assertEqual(self.ns['target'], 0, '故障后不能保留旧焦点阻止新窗口吞键')
+        self.assertEqual(self.replay.state.bindings.toggle.main, 0xDD)
+        self.assertTrue(self.ns['allowed'])
+        self.assertNotIn((0xDD, True), self.replay.replay(self.cycle()))
+        self.assertEqual(self.replay.drain_jobs(), [])
+        self.profile.active.return_value = False
+        self.ns['tick']()
+        self.assertFalse(self.ns['allowed'])
+        self.replay.visible.clear()
+        self.assertEqual(self.replay.replay(self.cycle()), [(e[0], e[1]) for e in self.cycle()])
+        self.assertTrue(self.ns['native_fault'].is_set())
+        self.assertEqual(self.replay.drain_jobs(), [])
+
+    def test_fault_plus_invalid_config_clears_binding_until_valid_again(self):
+        self.ns['tick']()
+        self.config.write_text('{broken', encoding='utf-8')
+        self.ns['tick']()
+        self.assertEqual(self.replay.state.bindings, m.Bindings(None, None))
+        self.assertFalse(self.ns['allowed'])
+        self.assertEqual(self.replay.replay(self.cycle()), [(e[0], e[1]) for e in self.cycle()])
+        self.assertEqual(self.replay.drain_jobs(), [])
+        self.assertTrue(self.ns['native_fault'].is_set())
+
+    def test_fault_plus_stopped_listener_does_not_keep_old_binding(self):
+        self.ns['listener'].is_alive = lambda: True
+        self.ns['tick']()
+        self.ns['listener'].is_alive = lambda: False
+        self.ns['tick']()
+        self.assertFalse(self.ns['allowed'])
+        self.assertEqual(self.replay.state.bindings, m.Bindings(None, None))
+        self.assertEqual(self.replay.drain_jobs(), [])
 
 
 if __name__ == '__main__':

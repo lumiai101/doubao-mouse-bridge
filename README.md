@@ -2,11 +2,11 @@
 
 让 Logi Options+ 发出的鼠标快捷键触发豆包输入法语音。程序常驻 Windows 右下角通知区域，关闭设置窗口后继续运行；换键只改豆包和 Logi Options+ 的原有设置。
 
-这是非官方 Windows 工具。当前发布 **v0.2.0-rc.3 源码预览版**，包含托盘管理、后侧键只读检查、Win/Alt 菜单抢焦点路径修复，以及新的深蓝色“鼠标＋声波”图标。
+这是非官方 Windows 工具。当前发布 **v0.2.0-rc.4 源码预览版**，包含托盘管理、后侧键只读检查、Win/Alt 菜单抢焦点路径修复、启动状态限时确认与故障防漏键保护，以及深蓝色“鼠标＋声波”图标。
 
-**下载：[v0.2.0-rc.3 Release](https://github.com/lumiai101/doubao-mouse-bridge/releases/tag/v0.2.0-rc.3)**。选择 `doubao-mouse-bridge-v0.2.0-rc.3-source.zip`，安装与运行见下文。下载包需要安装依赖，不包含 EXE、Python 运行环境或安装器。
+**下载：[v0.2.0-rc.4 Release](https://github.com/lumiai101/doubao-mouse-bridge/releases/tag/v0.2.0-rc.4)**。选择 `doubao-mouse-bridge-v0.2.0-rc.4-source.zip`，安装与运行见下文。下载包需要安装依赖（uv / Python），不包含 EXE、Python 运行环境或安装器。
 
-> 本版通过本地回归和隔离桌面检查，尚未完成本版实体鼠标语音和长期常驻的完整终验。用户反馈目前登录启动稳定，本轮不再安排注销/重启实测，不将其记为自动验证通过。图标出现、按键设置匹配，都不表示麦克风和文字上屏正常。完整边界见 [验证记录](docs/tray-verification.md) 和 [版本说明](docs/releases/v0.2.0-rc.3.md)。
+> 本版通过本地 96 项回归和隔离桌面检查，尚未完成本版实体鼠标语音和长期常驻的完整终验。用户对当前运行实例反馈人工恢复正常，但当前进程未重启不代表磁盘最新补丁终验；睡眠后底层失效未根治，手动重启恢复反馈不代表根因修复，稳定版仍不放行，本次维护者明确接受限制仅发 prerelease 源码预览。完整边界见 [验证记录](docs/tray-verification.md) 和 [版本说明](docs/releases/v0.2.0-rc.4.md)。
 
 ## 能做什么
 
@@ -89,7 +89,7 @@ python -m venv .venv
 
 ## 验证与已知限制
 
-本版已有 **78 项应用回归**，本次另加自检边界测试，覆盖快捷键、长按兜底、后侧键读取、菜单抑制、故障恢复、主入口和自检异常分支。测试不录音、不注入全局按键、不安装输入监听；其中 `tests/test_tray.py` 会创建并短暂显示真实 Tk 窗口，完整测试需要可用的 Windows 桌面会话。隔离桌面检查使用真实 Tk 窗口与 pystray，但用替身代替语音和输入监听。
+本版已有 **96 项本地回归**（原 83 项加上 6 项启动状态确认与 7 项吞键保护测试），覆盖快捷键、长按兜底、后侧键读取、菜单抑制、故障锁存防漏键、启动时限确认、主入口和自检异常分支。测试不录音、不注入全局按键、不安装输入监听；其中 `tests/test_tray.py` 会创建并短暂显示真实 Tk 窗口，完整测试需要可用的 Windows 桌面会话。隔离桌面检查使用真实 Tk 窗口与 pystray，但用替身代替语音和输入监听。
 
 在已安装依赖的 Windows 环境中运行：
 
@@ -98,7 +98,7 @@ python -X utf8 -B -I scripts\doctor.py
 python -X utf8 -B -I scripts\doctor.py --quick
 ```
 
-完整自检汇总 8 项检查，默认跳过 Startup，只有加 `--check-startup` 才只读核对快捷方式；`--quick` 另跳过单元测试和隔离托盘探针。最终本地回归为 **83 项通过**（78 项应用测试加 5 项自检测试）。退出码 0 允许存在警告，退出码 1 表示失败；请查看汇总。它不录音、不注入按键、不重启或修改用户设置，不证明实体侧键出字、当前常驻实例托盘可见或 RPC 在线。Startup 仅只读核对，不是登录实测。也可逐项运行：
+完整自检汇总 8 项检查，默认跳过 Startup，只有加 `--check-startup` 才只读核对快捷方式；`--quick` 另跳过单元测试和隔离托盘探针。最终本地回归为 **96 项通过**，`doctor.py` 退出码 0，汇总为 6 pass / 1 warn / 0 fail / 1 skip（warn 为侧键历史设备映射差异，Startup 默认 skip）。它不录音、不注入按键、不重启或修改用户设置，不证明实体侧键出字、当前常驻实例托盘可见或 RPC 在线。Startup 仅只读核对，不是登录实测。也可逐项运行：
 
 ```powershell
 python -X utf8 -B -I -m unittest discover -s tests -p "test_*.py" -v
@@ -106,7 +106,7 @@ python -X utf8 -B -I scripts\verify_tray.py
 python -X utf8 -B -I scripts\check_release.py
 ```
 
-`verify_tray.py` 需要可交互的 Windows 桌面。发布检查严格检查公开文件清单，忽略 `.git/`、`.venv/`、`__pycache__/`、`dist/`、`.claude/` 及运行日志；其他额外文件仍会被拒绝。Release ZIP 只收录清单中的公开文件，不包含上述忽略目录。维护者可按 [贡献说明](CONTRIBUTING.md) 生成并复查下载包。
+`verify_tray.py` 需要可交互的 Windows 桌面。发布检查严格检查公开文件清单（34 项），忽略 `.git/`、`.venv/`、`__pycache__/`、`dist/`、`.claude/` 及运行日志；其他额外文件仍会被拒绝。Release ZIP 只收录清单中的公开文件，不包含上述忽略目录。维护者可按 [贡献说明](CONTRIBUTING.md) 生成并复查下载包。
 
 历史版本已在本机完成部分实体语音与换键验证，不能替代本预览版终验。本版尚未完成实体鼠标语音、睡眠唤醒、Explorer 重启、高 DPI 和长期运行的完整验收；真实登录按用户要求本轮不再验证，Windows 11 及其他设备也无本版完整验收。Win/Alt 修复已有隔离回放证据，不能保证所有系统快捷键都无冲突。当前按维护者选择不使用 GitHub CI，不要求充值或等待远端绿灯，以本地自动验证记录作为交付依据；工作流仅保留手动入口，不在提交或 PR 更新时自动运行。本地通过不表示远端 CI 已执行。
 

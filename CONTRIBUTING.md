@@ -42,6 +42,6 @@ python -B -I scripts\check_release.py
 python -X utf8 -B -I scripts\build_release.py
 ```
 
-脚本只复制 `FILES` 清单，先在隔离目录执行发布检查，再写入 `dist/doubao-mouse-bridge-v0.2.0-rc.3-source.zip` 与同名 `.sha256` 文件。它拒绝覆盖已有产物，不收录日志、配置、`.venv` 或 `.claude` 工作副本；最后将 ZIP 解压到另一隔离目录，再次核对清单和发布检查。它不运行实体语音，也不上传 GitHub。
+脚本只复制 `FILES` 清单，先在隔离目录执行发布检查，再写入 `dist/doubao-mouse-bridge-v0.2.0-rc.4-source.zip` 与同名 `.sha256` 文件。它拒绝覆盖已有产物，不收录日志、配置、`.venv` 或 `.claude` 工作副本；最后将 ZIP 解压到另一隔离目录，再次核对清单和发布检查。它不运行实体语音，也不上传 GitHub。
 
 原目录因本地额外文件被检查拦下时，不要删除其他工作副本或放宽检查。使用此脚本检查实际将公开的文件，并在提交前核对 `git diff --cached`。

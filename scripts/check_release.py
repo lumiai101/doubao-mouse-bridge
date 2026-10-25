@@ -19,10 +19,10 @@ FILES = (
     'tests/test_menu_suppression.py', 'scripts/build_release.py',
     'docs/releases/v0.2.0-rc.1.md', 'docs/releases/v0.2.0-rc.2.md',
     'scripts/doctor.py', 'tests/test_doctor.py',
-    'docs/releases/v0.2.0-rc.3.md',
+    'docs/releases/v0.2.0-rc.3.md', 'docs/releases/v0.2.0-rc.4.md',
 )
 # 仅对 src/doubao_mouse_bridge.py 按 LF 计算指纹，不覆盖 FILES 全集，也不代表实体验收。
-SOURCE_SHA256 = '0a281f2a94045cf482c9c56d7fa662130a3a69bafe51e9612080e520a797dfef'
+SOURCE_SHA256 = '5518b1b21190c4b6ab0ca4f4dc37ee37dbc62cd70ce0bce6d89f5d4162ab7a2c'
 IGNORED_DIRS = {'.git', '.venv', '__pycache__', 'dist', '.claude'}
 PATTERNS = {
     '本机用户绝对路径': re.compile(r'(?:[A-Za-z]:[\\/]Users[\\/]|/home/)[A-Za-z0-9_.-]+[\\/]', re.I),
