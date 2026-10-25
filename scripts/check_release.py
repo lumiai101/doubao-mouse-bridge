@@ -13,11 +13,17 @@ FILES = (
     'docs/troubleshooting.md', 'requirements.txt', 'setup.cmd', 'start.cmd',
     'src/doubao_mouse_bridge.py', 'tests/test_bridge.py', 'scripts/check_release.py',
     'tests/test_callback_latency.py', 'tests/test_physical_fallback.py',
-    'tests/test_native_lifecycle.py',
+    'tests/test_native_lifecycle.py', 'tests/test_tray.py',
+    'scripts/verify_tray.py', 'docs/tray-verification.md',
+    'tests/test_side_button.py', 'scripts/verify_side_button.py',
+    'tests/test_menu_suppression.py', 'scripts/build_release.py',
+    'docs/releases/v0.2.0-rc.1.md', 'docs/releases/v0.2.0-rc.2.md',
+    'scripts/doctor.py', 'tests/test_doctor.py',
+    'docs/releases/v0.2.0-rc.3.md',
 )
-# 按 LF 计算发布源码指纹，避免 Git 换行转换造成误报；不代表实体验收通过。
-SOURCE_SHA256 = 'a89f8c5e1720fa6ab3d76496e156552dc4d55a26e4fd25243f778d3f6ffd4bb9'
-IGNORED_DIRS = {'.git', '.venv', '__pycache__'}
+# 仅对 src/doubao_mouse_bridge.py 按 LF 计算指纹，不覆盖 FILES 全集，也不代表实体验收。
+SOURCE_SHA256 = '0a281f2a94045cf482c9c56d7fa662130a3a69bafe51e9612080e520a797dfef'
+IGNORED_DIRS = {'.git', '.venv', '__pycache__', 'dist', '.claude'}
 PATTERNS = {
     '本机用户绝对路径': re.compile(r'(?:[A-Za-z]:[\\/]Users[\\/]|/home/)[A-Za-z0-9_.-]+[\\/]', re.I),
     '私钥': re.compile(r'-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----'),

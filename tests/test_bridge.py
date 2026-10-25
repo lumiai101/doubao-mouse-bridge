@@ -198,6 +198,32 @@ class NativeVoiceTests(unittest.TestCase):
         self.assertTrue(client.owned)
         self.assertNotIn(1011, client.calls)
 
+    def test_slow_result_can_be_rechecked_without_cancelling(self):
+        client = self.client([8] * 150 + [8, 0])
+        with patch.object(m.time, 'sleep'):
+            client.command('stop')
+        client.command('check-idle')
+        self.assertTrue(client.owned)
+        client.command('check-idle')
+        self.assertFalse(client.owned)
+        self.assertNotIn(1013, client.calls)
+        self.assertEqual(client.calls.count(1008), 1)
+
+    def test_idle_reply_reaps_previous_child(self):
+        from unittest.mock import MagicMock
+        session = m.VoiceSession('unused')
+        process = session.process = MagicMock()
+        process.is_alive.return_value = False
+        connection = session.connection = MagicMock()
+        connection.poll.return_value = True
+        connection.recv.return_value = (True, True, '')
+        self.assertFalse(session.command('check-idle'))
+        connection.send.assert_called_once_with('check-idle')
+        process.join.assert_called_once_with(3)
+        process.terminate.assert_not_called()
+        connection.close.assert_called_once_with()
+        self.assertIsNone(session.process)
+
     def test_explicit_cancel_is_finite(self):
         client = self.client([])
         client.command('cancel')

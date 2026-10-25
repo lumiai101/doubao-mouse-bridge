@@ -1,8 +1,7 @@
 name: Test
 
+# 默认使用本地验证，GitHub Actions 仅保留手动入口。
 on:
-  push:
-  pull_request:
   workflow_dispatch:
 
 permissions:
@@ -17,6 +16,8 @@ jobs:
         with:
           python-version: '3.13'
           architecture: x64
+      - name: Install test dependencies
+        run: python -m pip install -r requirements.txt
       - name: Run offline unit tests
         run: python -B -I -m unittest discover -s tests -p "test_*.py" -v
       - name: Check release files
