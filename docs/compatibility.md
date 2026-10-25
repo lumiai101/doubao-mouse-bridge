@@ -14,7 +14,7 @@
 
 0.1.0 实体验收源 SHA-256 为 `1eafd1a8ac48d8c3c971cc037cf029a32936aec80ca543155a581182826fbe70`。
 
-当前 v0.2.0-rc.2 按 LF 换行计算的源码 SHA-256 为 `0a281f2a94045cf482c9c56d7fa662130a3a69bafe51e9612080e520a797dfef`。可用 `scripts/check_release.py` 核对。该指纹仅证明源码一致，不代表本版完成实体终验。
+当前 v0.2.0-rc.3（应用源码与 rc.2 相同）按 LF 换行计算的源码 SHA-256 为 `0a281f2a94045cf482c9c56d7fa662130a3a69bafe51e9612080e520a797dfef`。可用 `scripts/check_release.py` 核对。该指纹仅证明源码一致，不代表本版完成实体终验。
 
 ## 实体验收记录
 

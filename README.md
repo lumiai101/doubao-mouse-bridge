@@ -2,11 +2,11 @@
 
 让 Logi Options+ 发出的鼠标快捷键触发豆包输入法语音。程序常驻 Windows 右下角通知区域，关闭设置窗口后继续运行；换键只改豆包和 Logi Options+ 的原有设置。
 
-这是非官方 Windows 工具。当前发布 **v0.2.0-rc.2 源码预览版**，包含托盘管理、后侧键只读检查、Win/Alt 菜单抢焦点路径修复，以及新的深蓝色“鼠标＋声波”图标。
+这是非官方 Windows 工具。当前发布 **v0.2.0-rc.3 源码预览版**，包含托盘管理、后侧键只读检查、Win/Alt 菜单抢焦点路径修复，以及新的深蓝色“鼠标＋声波”图标。
 
-**下载：[v0.2.0-rc.2 Release](https://github.com/lumiai101/doubao-mouse-bridge/releases/tag/v0.2.0-rc.2)**。选择 `doubao-mouse-bridge-v0.2.0-rc.2-source.zip`，安装与运行见下文。下载包需要安装依赖，不包含 EXE、Python 运行环境或安装器。
+**下载：[v0.2.0-rc.3 Release](https://github.com/lumiai101/doubao-mouse-bridge/releases/tag/v0.2.0-rc.3)**。选择 `doubao-mouse-bridge-v0.2.0-rc.3-source.zip`，安装与运行见下文。下载包需要安装依赖，不包含 EXE、Python 运行环境或安装器。
 
-> 本版通过本地回归和隔离桌面检查，尚未完成本版实体鼠标语音和长期常驻的完整终验。用户反馈目前登录启动稳定，本轮不再安排注销/重启实测，不将其记为自动验证通过。图标出现、按键设置匹配，都不表示麦克风和文字上屏正常。完整边界见 [验证记录](docs/tray-verification.md) 和 [版本说明](docs/releases/v0.2.0-rc.2.md)。
+> 本版通过本地回归和隔离桌面检查，尚未完成本版实体鼠标语音和长期常驻的完整终验。用户反馈目前登录启动稳定，本轮不再安排注销/重启实测，不将其记为自动验证通过。图标出现、按键设置匹配，都不表示麦克风和文字上屏正常。完整边界见 [验证记录](docs/tray-verification.md) 和 [版本说明](docs/releases/v0.2.0-rc.3.md)。
 
 ## 能做什么
 

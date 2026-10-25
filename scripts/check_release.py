@@ -19,6 +19,7 @@ FILES = (
     'tests/test_menu_suppression.py', 'scripts/build_release.py',
     'docs/releases/v0.2.0-rc.1.md', 'docs/releases/v0.2.0-rc.2.md',
     'scripts/doctor.py', 'tests/test_doctor.py',
+    'docs/releases/v0.2.0-rc.3.md',
 )
 # 仅对 src/doubao_mouse_bridge.py 按 LF 计算指纹，不覆盖 FILES 全集，也不代表实体验收。
 SOURCE_SHA256 = '0a281f2a94045cf482c9c56d7fa662130a3a69bafe51e9612080e520a797dfef'
