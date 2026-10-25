@@ -18,10 +18,11 @@ FILES = (
     'tests/test_side_button.py', 'scripts/verify_side_button.py',
     'tests/test_menu_suppression.py', 'scripts/build_release.py',
     'docs/releases/v0.2.0-rc.1.md', 'docs/releases/v0.2.0-rc.2.md',
+    'scripts/doctor.py', 'tests/test_doctor.py',
 )
-# 按 LF 计算发布源码指纹，避免 Git 换行转换造成误报；不代表实体验收通过。
+# 仅对 src/doubao_mouse_bridge.py 按 LF 计算指纹，不覆盖 FILES 全集，也不代表实体验收。
 SOURCE_SHA256 = '0a281f2a94045cf482c9c56d7fa662130a3a69bafe51e9612080e520a797dfef'
-IGNORED_DIRS = {'.git', '.venv', '__pycache__'}
+IGNORED_DIRS = {'.git', '.venv', '__pycache__', 'dist', '.claude'}
 PATTERNS = {
     '本机用户绝对路径': re.compile(r'(?:[A-Za-z]:[\\/]Users[\\/]|/home/)[A-Za-z0-9_.-]+[\\/]', re.I),
     '私钥': re.compile(r'-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----'),
