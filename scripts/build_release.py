@@ -10,7 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import check_release
 
 
-VERSION = '0.2.0-rc.1'
+VERSION = '0.2.0-rc.2'
 ROOT = Path(__file__).resolve().parents[1]
 
 

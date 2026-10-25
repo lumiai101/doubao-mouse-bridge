@@ -498,7 +498,10 @@ class NativeVoice:
         return result
 
     def command(self, action):
-        if action == 'start':
+        if action == 'check-idle':
+            if self.call(1006) == 0:
+                self.owned = False
+        elif action == 'start':
             current = self.call(1006)
             if current != 0:
                 raise RuntimeError('已有语音会话，不接管')
@@ -563,7 +566,7 @@ def native_session(connection, install):
                     if action == 'start' and not native.sink:
                         native.attach(hwnd)
                     native.command(action)
-                    ending = action in ('stop', 'cancel') and not native.owned
+                    ending = action in ('stop', 'cancel', 'check-idle') and not native.owned
                     connection.send((True, ending, ''))
                     if ending:
                         return
@@ -964,6 +967,10 @@ def main():
                 if closing.is_set() or native_fault.is_set():
                     continue
                 logging.info('会话命令 %s', action)
+                if action in ('start', 'start-fallback') and native.process is not None:
+                    if native.command('check-idle'):
+                        raise RuntimeError('豆包仍在处理上次语音，本次未启动；请核对豆包状态后退出并重新启动适配')
+                    fallback_owned = False
                 if action == 'start-fallback':
                     if native.process is None:
                         fallback_owned = native.command(action)
@@ -972,8 +979,6 @@ def main():
                         native.command('stop')
                         fallback_owned = False
                 else:
-                    if action == 'start' and native.process is not None:
-                        continue
                     native.command(action)
                     if action in ('stop', 'cancel'):
                         fallback_owned = False
@@ -987,6 +992,7 @@ def main():
     threading.Thread(target=worker, name='DoubaoNativeVoice', daemon=True).start()
 
     def event_filter(msg, data):
+        nonlocal target
         if msg not in (0x100, 0x101, 0x104, 0x105):
             return False
         injected = bool(data.flags & 0x12)
@@ -1012,12 +1018,18 @@ def main():
                 return False
             down = msg in (0x100, 0x104)
             mask_release = injected and not down and vk in state.menu_modifiers
-            suppressed, actions = state.key(vk, down, injected, allowed and not paused and not native_fault.is_set(), time.monotonic())
+            foreground = user.GetForegroundWindow()
+            foreground_changed = bool(target and foreground != target)
+            if foreground_changed:
+                send(state.reset(state.bindings))
+            suppressed, actions = state.key(vk, down, injected, allowed and not foreground_changed and not paused and not native_fault.is_set(), time.monotonic())
             if injected and down and suppressed:
                 # 只记已经因本次匹配而隐藏主键的修饰键；未匹配组合仍完整透传。
                 state.menu_modifiers.update((state.pressed & MENU_MODIFIERS) - state.swallowed)
             if mask_release:
                 state.menu_modifiers.discard(vk)
+            if state.pending or state.active:
+                target = target or user.GetForegroundWindow()
             send(actions)
         if mask_release and not suppressed:
             # 原按下已透传，不能只吞释放；回放带标记的成对释放，避免裸 Win/Alt 菜单。
@@ -1206,7 +1218,7 @@ def main():
                 while not physical_events.empty():
                     vk, down = physical_events.get_nowait()
                     send(physical.key(vk, down, allowed and not paused and not native_fault.is_set(), time.monotonic()))
-                if target and hwnd != target and state.active:
+                if target and hwnd != target and (state.active or state.pending):
                     send(state.reset(state.bindings))
                 if target and hwnd != target and (physical.active or physical.pending_at is not None):
                     send(physical.reset(physical.shortcut))

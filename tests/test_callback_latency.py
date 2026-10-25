@@ -26,10 +26,13 @@ def callback(state, lock):
               physical_events=m.queue.SimpleQueue(), closing=threading.Event(),
               native_fault=threading.Event(),
               lock=lock, allowed=True, paused=False, jobs=m.queue.Queue(),
+              user=types.SimpleNamespace(GetForegroundWindow=lambda: 100),
               listener=types.SimpleNamespace(suppress_event=lambda: None))
     send = next(n for n in main.body if isinstance(n, ast.FunctionDef) and n.name == 'send')
-    exec(compile(ast.fix_missing_locations(ast.Module(body=[send, fn], type_ignores=[])), str(SOURCE), 'exec'), ns)
-    return ns['event_filter']
+    factory = ast.parse('def make_callback():\n    target = 0\n').body[0]
+    factory.body.extend([send, fn, ast.Return(value=ast.Name(id='event_filter', ctx=ast.Load()))])
+    exec(compile(ast.fix_missing_locations(ast.Module(body=[factory], type_ignores=[])), str(SOURCE), 'exec'), ns)
+    return ns['make_callback']()
 
 
 class CallbackLatencyTests(unittest.TestCase):

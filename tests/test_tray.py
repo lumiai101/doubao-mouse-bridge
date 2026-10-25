@@ -493,6 +493,201 @@ class TrayAndLifecycleTests(unittest.TestCase):
         self.assertEqual(len(dialog_history['askyesno']), 2)
         self.assertTrue(any('监听已就绪' in t for t in recorded_states.get('recovered_labels', [])))
 
+    def test_pending_hold_is_cancelled_when_foreground_changes(self):
+        import tkinter as tk
+
+        for switch_delay, dual in ((0, False), (100, False), (0, True)):
+            self.config_data['voice']['voiceShortcut'] = {'keyCode': 0, 'modifierFlags': 0x801 if dual else 0}
+            self.config_path.write_text(json.dumps(self.config_data), encoding='utf-8')
+            with self.subTest(switch_delay=switch_delay, dual=dual):
+                commands = []
+                captured = {}
+                failures = []
+                user = MockUser32()
+
+                class Listener:
+                    def __init__(self, win32_event_filter=None, **kw):
+                        captured['filter'] = win32_event_filter
+                        self.alive = True
+                    def start(self): pass
+                    def wait(self): pass
+                    def is_alive(self): return self.alive
+                    def stop(self): self.alive = False
+                    def suppress_event(self): pass
+
+                class Voice:
+                    process = None
+                    def __init__(self, install): pass
+                    def command(self, action): commands.append(action); return False
+                    def close(self): pass
+
+                class Profile:
+                    def active(self): return True
+                    def close(self): pass
+
+                class Tray:
+                    def __init__(self, *a, **kw): self.done = threading.Event()
+                    def run(self, setup=None):
+                        if setup: setup(self)
+                        self.done.wait()
+                    def stop(self): self.done.set()
+                    def update_menu(self): pass
+
+                original = make_clean_tk(tk.Tk)
+                def create_root(*a, **kw):
+                    root = original(*a, **kw)
+                    def finish():
+                        try:
+                            self.assertNotIn('start', commands)
+                            event = types.SimpleNamespace(flags=0x12, vkCode=0xA5, scanCode=0)
+                            captured['filter'](0x101, event)
+                        except BaseException as exc:
+                            failures.append(exc)
+                        finally:
+                            def exit_button(parent):
+                                for child in parent.winfo_children():
+                                    if isinstance(child, tk.Button) and child.cget('text') == '退出程序':
+                                        child.invoke()
+                                        return True
+                                    if exit_button(child):
+                                        return True
+                            exit_button(root)
+                    def press():
+                        event = types.SimpleNamespace(flags=0x12, vkCode=0xA5, scanCode=0)
+                        captured['filter'](0x100, event)
+                        if switch_delay:
+                            root.after(switch_delay, lambda: setattr(user, 'fg_hwnd', 200))
+                        else:
+                            user.fg_hwnd = 200
+                        if dual:
+                            captured['filter'](0x101, event)
+                        root.after(350, finish)
+                    root.after(100, press)
+                    return root
+
+                fake = types.SimpleNamespace(keyboard=types.SimpleNamespace(Listener=Listener))
+                import pystray
+                with patch.dict(sys.modules, {'pynput': fake, 'pynput.keyboard': fake.keyboard}), \
+                     patch.object(pystray, 'Icon', Tray), \
+                     patch.object(ctypes, 'WinDLL', side_effect=lambda name, **kw: MockKernel32() if name == 'kernel32' else user), \
+                     patch.object(m, 'find_install', return_value=Path(self.temp_dir.name)), \
+                     patch.object(m, 'VoiceSession', Voice), \
+                     patch.object(m, 'DoubaoProfile', Profile), \
+                     patch.object(m, 'RotatingFileHandler', return_value=logging.NullHandler()), \
+                     patch.object(tk, 'Tk', side_effect=create_root), \
+                     patch.object(sys, 'argv', ['bridge', '--config', str(self.config_path)]):
+                    m.main()
+                if failures:
+                    raise failures[0]
+
+    def test_slow_result_is_checked_before_next_start(self):
+        import tkinter as tk
+        from tkinter import messagebox
+
+        for busy in (False, True):
+            with self.subTest(busy=busy):
+                commands = []
+                captured = {}
+                failures = []
+                observed = {}
+
+                class Listener:
+                    def __init__(self, win32_event_filter=None, **kw):
+                        captured['filter'] = win32_event_filter
+                        self.alive = True
+                    def start(self): pass
+                    def wait(self): pass
+                    def is_alive(self): return self.alive
+                    def stop(self): self.alive = False
+                    def suppress_event(self): pass
+
+                class SlowVoice:
+                    process = None
+                    def __init__(self, install): pass
+                    def command(self, action):
+                        commands.append(action)
+                        if action == 'start': self.process = object()
+                        if action == 'check-idle' and not busy: self.process = None
+                        if action == 'cancel': self.process = None
+                        return self.process is not None
+                    def close(self): self.process = None
+
+                class Profile:
+                    def active(self): return True
+                    def close(self): pass
+
+                class Tray:
+                    def __init__(self, *a, **kw): self.done = threading.Event()
+                    def run(self, setup=None):
+                        if setup: setup(self)
+                        self.done.wait()
+                    def stop(self): self.done.set()
+                    def update_menu(self): pass
+
+                original = make_clean_tk(tk.Tk)
+                def create_root(*a, **kw):
+                    root = original(*a, **kw)
+                    def widgets(parent):
+                        for child in parent.winfo_children():
+                            yield child
+                            yield from widgets(child)
+                    def exit_test():
+                        next(w for w in widgets(root) if isinstance(w, tk.Button) and w.cget('text') == '退出程序').invoke()
+                    def tap():
+                        event = types.SimpleNamespace(flags=0x12, vkCode=0xA5, scanCode=0)
+                        captured['filter'](0x100, event)
+                        captured['filter'](0x101, event)
+                    def wait_for(predicate, then, deadline=None):
+                        deadline = deadline or time.monotonic() + 3
+                        if predicate():
+                            then()
+                        elif time.monotonic() > deadline:
+                            failures.append(AssertionError('工作线程未按预期执行: ' + repr(commands)))
+                            exit_test()
+                        else:
+                            root.after(10, lambda: wait_for(predicate, then, deadline))
+                    def finish():
+                        try:
+                            expected = ['start', 'stop', 'check-idle'] + ([] if busy else ['start'])
+                            self.assertEqual(commands, expected)
+                            if busy:
+                                labels = [w.cget('text') for w in widgets(root) if isinstance(w, tk.Label)]
+                                self.assertTrue(any('录音状态未确认' in text for text in labels))
+                            observed['checked'] = True
+                        except BaseException as exc:
+                            failures.append(exc)
+                        finally:
+                            exit_test()
+                    def restart():
+                        tap()
+                        wait_for(lambda: 'check-idle' in commands and (busy or commands.count('start') == 2),
+                                 lambda: root.after(1100 if busy else 50, finish))
+                    def stop():
+                        tap()
+                        wait_for(lambda: 'stop' in commands, restart)
+                    def start():
+                        tap()
+                        wait_for(lambda: 'start' in commands, stop)
+                    root.after(100, start)
+                    return root
+
+                fake = types.SimpleNamespace(keyboard=types.SimpleNamespace(Listener=Listener))
+                import pystray
+                with patch.dict(sys.modules, {'pynput': fake, 'pynput.keyboard': fake.keyboard}), \
+                     patch.object(pystray, 'Icon', Tray), \
+                     patch.object(ctypes, 'WinDLL', side_effect=lambda name, **kw: MockKernel32() if name == 'kernel32' else MockUser32()), \
+                     patch.object(m, 'find_install', return_value=Path(self.temp_dir.name)), \
+                     patch.object(m, 'VoiceSession', SlowVoice), \
+                     patch.object(m, 'DoubaoProfile', Profile), \
+                     patch.object(m, 'RotatingFileHandler', return_value=logging.NullHandler()), \
+                     patch.object(messagebox, 'showwarning'), \
+                     patch.object(tk, 'Tk', side_effect=create_root), \
+                     patch.object(sys, 'argv', ['bridge', '--config', str(self.config_path)]):
+                    m.main()
+                if failures:
+                    raise failures[0]
+                self.assertTrue(observed.get('checked'))
+
     def test_secondary_launch_collision_branches(self):
         """测试单实例互斥体碰撞（错误码183）时的唤醒现有窗口与旧版兼容弹窗。"""
         mock_kernel = MockKernel32()

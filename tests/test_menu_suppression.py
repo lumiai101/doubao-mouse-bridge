@@ -37,8 +37,15 @@ class HookReplay:
                        native_fault=threading.Event(), lock=threading.RLock(), allowed=True,
                        paused=False, jobs=m.queue.Queue(), user=self,
                        listener=types.SimpleNamespace(suppress_event=self.suppress))
-        exec(compile(ast.fix_missing_locations(ast.Module(body=functions, type_ignores=[])),
+        factory = ast.parse('def make_callback():\n    target = 0\n').body[0]
+        factory.body.extend(functions + [ast.Return(value=ast.Name(id='event_filter', ctx=ast.Load()))])
+        exec(compile(ast.fix_missing_locations(ast.Module(body=[factory], type_ignores=[])),
                      str(SOURCE), 'exec'), self.ns)
+        self.ns['event_filter'] = self.ns['make_callback']()
+
+    @staticmethod
+    def GetForegroundWindow():
+        return 100
 
     @staticmethod
     def suppress():

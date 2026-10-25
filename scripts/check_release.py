@@ -17,10 +17,10 @@ FILES = (
     'scripts/verify_tray.py', 'docs/tray-verification.md',
     'tests/test_side_button.py', 'scripts/verify_side_button.py',
     'tests/test_menu_suppression.py', 'scripts/build_release.py',
-    'docs/releases/v0.2.0-rc.1.md',
+    'docs/releases/v0.2.0-rc.1.md', 'docs/releases/v0.2.0-rc.2.md',
 )
 # 按 LF 计算发布源码指纹，避免 Git 换行转换造成误报；不代表实体验收通过。
-SOURCE_SHA256 = 'e5c7b011665f4b5e322b3ab8142ab3bfc656a0995256a1a08513852432d1ab66'
+SOURCE_SHA256 = '0a281f2a94045cf482c9c56d7fa662130a3a69bafe51e9612080e520a797dfef'
 IGNORED_DIRS = {'.git', '.venv', '__pycache__'}
 PATTERNS = {
     '本机用户绝对路径': re.compile(r'(?:[A-Za-z]:[\\/]Users[\\/]|/home/)[A-Za-z0-9_.-]+[\\/]', re.I),
