@@ -24,6 +24,7 @@ def callback(state, lock):
     ns = dict(vars(m))
     ns.update(state=state, physical=m.PhysicalHold(state.bindings.hold),
               physical_events=m.queue.SimpleQueue(), closing=threading.Event(),
+              native_fault=threading.Event(),
               lock=lock, allowed=True, paused=False, jobs=m.queue.Queue(),
               listener=types.SimpleNamespace(suppress_event=lambda: None))
     send = next(n for n in main.body if isinstance(n, ast.FunctionDef) and n.name == 'send')

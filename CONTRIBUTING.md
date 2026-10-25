@@ -2,12 +2,15 @@
 
 ## 运行测试
 
-离线单测仅使用Python标准库，不要求安装豆包或pynput，不启动GUI、录音或全局钩子。
+测试环境先安装 `requirements.txt`。离线测试不要求安装豆包，不打开真实窗口、不录音、不安装全局输入监听；图标测试使用 Pillow，菜单测试使用 pystray。
 
 ```powershell
+python -m pip install -r requirements.txt
 python -X utf8 -B -I -m unittest discover -s tests -p "test_*.py" -v
 python -B -I scripts\check_release.py
 ```
+
+需要真实 Windows 桌面时，另运行 `python -X utf8 -B -I scripts\verify_tray.py`。它运行真实 Tk/pystray，替换语音和输入监听，不抢占现用实例、不打开麦克风。
 
 运行应用按README安装依赖。不要把应用运行环境、日志和测试时的真实配置提交到仓库。
 
@@ -30,3 +33,13 @@ python -B -I scripts\check_release.py
 发布源码 ZIP 不含 Git 仓库历史和运行数据。以 `scripts/check_release.py` 的 `FILES` 清单打包，保留 `.github`、`.gitignore` 和 `.gitattributes`。源码 ZIP 可作为 Release 下载附件，不代替展开的仓库源码。
 
 `SOURCE_SHA256` 是按 LF 换行计算的发布指纹，不是实体语音验收证明。修改运行源后先审阅差异、运行测试并更新兼容性记录，再更新指纹。
+
+在仓库目录运行：
+
+```powershell
+python -X utf8 -B -I scripts\build_release.py
+```
+
+脚本只复制 `FILES` 清单，先在隔离目录执行发布检查，再写入 `dist/doubao-mouse-bridge-v0.2.0-rc.1-source.zip` 与同名 `.sha256` 文件。它拒绝覆盖已有产物，不收录日志、配置、`.venv` 或 `.claude` 工作副本；最后将 ZIP 解压到另一隔离目录，再次核对清单和发布检查。它不运行实体语音，也不上传 GitHub。
+
+原目录因本地额外文件被检查拦下时，不要删除其他工作副本或放宽检查。使用此脚本检查实际将公开的文件，并在提交前核对 `git diff --cached`。
