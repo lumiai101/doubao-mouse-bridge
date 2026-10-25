@@ -1,8 +1,7 @@
 name: Test
 
+# 默认使用本地验证，GitHub Actions 仅保留手动入口。
 on:
-  push:
-  pull_request:
   workflow_dispatch:
 
 permissions:

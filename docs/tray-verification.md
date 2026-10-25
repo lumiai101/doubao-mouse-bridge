@@ -154,7 +154,7 @@ python -X utf8 -B -I scripts/verify_side_button.py
 - 修复后的 78 项本地测试全部通过；两处代码复审验收达到 94/100，硬性问题已消除。该审查不替代远端 CI 或实体麦克风验证。
 - 修正版源码 SHA-256（LF）：`0a281f2a94045cf482c9c56d7fa662130a3a69bafe51e9612080e520a797dfef`。rc.2 源码包以 `scripts/check_release.py` 中的 30 项 `FILES` 清单为准构建、核对和上传；运行 `python -B -I scripts/build_release.py` 可核对文件数。
 
-远端检查已发现独立阻塞：历史运行的 GitHub 注释为 `The job was not started because your account is locked due to a billing issue.`，并无测试日志。该结果不能算测试通过或测试断言失败；新 PR 的结果以 Checks 页面为准，不通过改代码绕过账号限制。
+历史远端检查曾因计费限制未启动，GitHub 注释为 `The job was not started because your account is locked due to a billing issue.`，并无测试日志。该结果不能算测试通过或测试断言失败。用户随后明确不使用 GitHub CI，不要求充值或等待远端绿灯；本轮改用本地自动验证记录作为交付依据，并取消工作流的 push / pull_request 自动触发，仅保留手动入口。这是交付策略调整，不将未运行的远端检查伪装成通过，也不再把账号计费列为本轮交付阻塞。
 
 本版仍未完成实体长按、免按、换键及普通键鼠非干扰的完整终验，也未完成睡眠唤醒、Explorer 重启、高 DPI 和长期常驻验收。真实登录由用户基于当前稳定使用反馈决定本轮不再验证，不记为本轮实测通过。发布源码预览不表示这些验收完成。
 

@@ -12,6 +12,8 @@ python -B -I scripts\check_release.py
 
 需要真实 Windows 桌面时，另运行 `python -X utf8 -B -I scripts\verify_tray.py`。它运行真实 Tk/pystray，替换语音和输入监听，不抢占现用实例、不打开麦克风。
 
+当前按维护者选择不使用 GitHub CI，不要求充值或等待远端绿灯。工作流仅保留手动入口，不在 push / pull_request 时自动运行。交付依据为本地 unittest、隔离托盘、发布门禁及 `scripts/doctor.py` 的实际结果；本地通过不表示远端 CI 已执行，也不替代实体回归。
+
 运行应用按README安装依赖。不要把应用运行环境、日志和测试时的真实配置提交到仓库。
 
 ## 修改边界
