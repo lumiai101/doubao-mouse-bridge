@@ -38,7 +38,8 @@ class HookReplay:
         self.ns = dict(vars(m), state=self.state, physical=m.PhysicalHold(bindings.hold),
                        physical_events=m.queue.SimpleQueue(), closing=threading.Event(),
                        native_fault=threading.Event(), lock=threading.RLock(), allowed=True,
-                       paused=False, jobs=m.queue.Queue(), user=self,
+                       recovering=threading.Event(), voice_ready=lambda: not self.ns['native_fault'].is_set(),
+                       paused=False, jobs=m.queue.Queue(), user=self, native_state=0, session_owned=False,
                        listener=types.SimpleNamespace(suppress_event=self.suppress))
         factory = ast.parse('def make_callback():\n    target = 0\n').body[0]
         factory.body.extend(functions + [ast.Return(value=ast.Name(id='event_filter', ctx=ast.Load()))])
@@ -307,7 +308,11 @@ class FaultTickTests(unittest.TestCase):
                        tray_failed=True, tray_ready=threading.Event(), tray_started_at=0,
                        ui=MagicMock(), status_var=MagicMock(), hold_var=MagicMock(),
                        toggle_var=MagicMock(), side_var=MagicMock(), diag_var=MagicMock(),
-                       update_tray_state=MagicMock())
+                       update_tray_state=MagicMock(), health_results=m.queue.SimpleQueue(),
+                       health_checked_at=0, health_generation=0, health_pending=False,
+                       health_error='', next_probe_at=0, auto_attempts=0,
+                       next_recovery_at=float('inf'), side_checked_at=0,
+                       mapping_valid=False, publish_status=MagicMock(), manual_recheck=MagicMock())
         self.ns['kernel'].WaitForSingleObject.return_value = 1
         self.ns['kernel'].OpenProcess.return_value = 0
         self.replay.GetWindowThreadProcessId = lambda hwnd, ptr: setattr(ptr._obj, 'value', 123)

@@ -25,7 +25,9 @@ def callback(state, lock):
     ns.update(state=state, physical=m.PhysicalHold(state.bindings.hold),
               physical_events=m.queue.SimpleQueue(), closing=threading.Event(),
               native_fault=threading.Event(),
+              recovering=threading.Event(), voice_ready=lambda: True,
               lock=lock, allowed=True, paused=False, jobs=m.queue.Queue(),
+              native_state=0, session_owned=False,
               user=types.SimpleNamespace(GetForegroundWindow=lambda: 100),
               listener=types.SimpleNamespace(suppress_event=lambda: None))
     send = next(n for n in main.body if isinstance(n, ast.FunctionDef) and n.name == 'send')

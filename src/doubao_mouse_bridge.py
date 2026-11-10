@@ -24,6 +24,10 @@ GROUPS = {1: frozenset((0xA4, 0xA5)), 2: frozenset((0xA2, 0xA3)),
 MOD_VKS = frozenset(vk for vk, _ in MODIFIERS.values())
 MENU_MODIFIERS = frozenset((0x5B, 0x5C, 0xA4, 0xA5))
 MENU_INPUT_TAG = 0x44424D42
+HEALTH_INTERVAL = 2.0
+HEALTH_TTL = 5.0
+SIDE_TTL = 6.0
+RECOVERY_BACKOFF = (2.0, 5.0, 15.0)
 
 
 class KeyboardInput(ctypes.Structure):
@@ -60,6 +64,7 @@ RPC_SHA256 = 'bc3d6fb5dbfa36161c9a6afddb3bde0c4937ee3a3a08bec1ddde71801710b11e'
 ALLOWED_RPC_SHA256 = frozenset({
     'bc3d6fb5dbfa36161c9a6afddb3bde0c4937ee3a3a08bec1ddde71801710b11e',  # v0.9.2.7
     'b1a609d662d807537f366b5c8d33ab20eba2701c0e207f67a0f664ea9a2c42d5',  # v0.9.3.19
+    '6b774ed5cabc3cb6050bcf51b6d343cd2ad5645d0d3e2abc012d3fc5b6f66575',  # v1.0.0.23，本机只读探测1006=0且导出契约与v1.0.0.20一致
 })
 
 
@@ -127,10 +132,10 @@ class Bindings:
 
 def read_bindings(path):
     config = json.loads(Path(path).read_text(encoding='utf-8-sig'))
-    if config.get('schemaVersion') != 12:
+    if config.get('schemaVersion') not in (12, 16):
         raise ValueError('未验证的豆包配置版本')
     voice = config['voice']
-    if voice.get('enableVoiceShortcut') is False:
+    if voice.get('enableVoiceShortcut') is False or voice.get('enableGlobalVoiceShortcut') is False:
         return Bindings(None, None)
     if voice.get('hasShortcutConflict'):
         raise ValueError('豆包报告快捷键冲突')
@@ -304,7 +309,7 @@ class InputState:
         self.started_at = now
         return ['start']
 
-    def key(self, vk, down, injected, allowed, now, voice_enabled=True):
+    def key(self, vk, down, injected, allowed, now, voice_enabled=True, busy=False, mine=False):
         if not injected:
             if vk in MOD_VKS:
                 (self.physical_modifiers.add if down else self.physical_modifiers.discard)(vk)
@@ -347,6 +352,10 @@ class InputState:
                 self.pending = None
         if self.active:
             spec, mode = self.active
+            if busy and not mine:
+                # 本次录音由其他入口启动：不接管，交还原生快捷键。
+                self.active = None
+                return False, []
             if mode == 'hold' and not spec.required_down(self.pressed):
                 self.active = None
                 actions.append('stop')
@@ -370,8 +379,15 @@ class InputState:
                 continue
             if not spec.main and vk not in MOD_VKS:
                 continue
+            if busy and not mine:
+                # 其他入口正在录音：不吞键，交还原生快捷键。
+                return False, actions
             self.swallowed.add(vk)
             suppress = True
+            if busy:
+                # 本程序会话仍在进行：本次按键就是结束，不再新建录音。
+                actions.append('stop')
+                break
             if mode == 'toggle':
                 self.active = spec, mode
                 self.started_at = now
@@ -491,6 +507,7 @@ class NativeVoice:
         self.dll.RpcPipe_PeekVoiceCommitUtf8.restype = ctypes.c_int
         self.sink = None
         self.owned = False
+        self.state = 0
 
     def attach(self, hwnd):
         self.sink = hwnd
@@ -508,6 +525,20 @@ class NativeVoice:
         result = self.dll.RpcPipe_SimpleMessage(self.pipe, code, a, 0)
         logging.info('RPC code=%s result=%s', code, result)
         return result
+
+    def probe(self):
+        kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+        kernel.WaitNamedPipeW.argtypes = [w.LPCWSTR, w.DWORD]
+        kernel.WaitNamedPipeW.restype = w.BOOL
+        if not kernel.WaitNamedPipeW(self.pipe.decode('ascii'), 1):
+            raise RuntimeError('豆包语音管道不可用，请确认豆包输入法服务正在运行后点击一键恢复')
+        current = self.call(1006)
+        if current < 0:
+            raise RuntimeError(f'豆包语音状态探测失败 (state={current})，请点击一键恢复')
+        self.state = current
+        if current == 3 and not self.owned:
+            raise RuntimeError('其他入口正在录音，未接管；请先在豆包结束录音再一键恢复')
+        return current
 
     def command(self, action):
         if action == 'check-idle':
@@ -539,7 +570,11 @@ class NativeVoice:
                 except Exception as cleanup:
                     raise RuntimeError(f'{exc}；取消失败: {cleanup}；请手动核对麦克风状态') from exc
                 raise
-        elif action in ('stop', 'cancel') and self.owned:
+        elif action in ('stop', 'cancel'):
+            if not self.owned:
+                # 本程序没有持有会话：不做任何原生调用，避免干扰豆包自身或其他入口的录音。
+                logging.info('未持有语音会话，忽略 %s', action)
+                return
             if action == 'cancel':
                 if self.call(1013):
                     raise RuntimeError('豆包语音取消失败')
@@ -571,52 +606,83 @@ def native_session(connection, install):
     user.DispatchMessageW.argtypes = [ctypes.POINTER(w.MSG)]
     hwnd = user.CreateWindowExW(0, 'STATIC', 'DoubaoVoiceSession', 0, 0, 0, 0, 0,
                                 w.HWND(-3), None, None, None)
-    if not hwnd:
-        raise ctypes.WinError(ctypes.get_last_error())
-    native = NativeVoice(install)
+    native = None
     finished = threading.Event()
+    terminal = []
 
     def commands():
         try:
             while True:
                 action = connection.recv()
                 try:
+                    if action == 'probe':
+                        current = native.probe()
+                        reply = (True, not native.owned, current)
+                        if not native.owned:
+                            terminal.append(reply)
+                            return
+                        connection.send(reply)
+                        continue
                     if action == 'start-fallback':
                         if native.call(1006) != 0:
-                            connection.send((True, True, ''))
+                            terminal.append((True, True, ''))
                             return
                         action = 'start'
                     if action == 'start' and not native.sink:
                         native.attach(hwnd)
                     native.command(action)
                     ending = action in ('stop', 'cancel', 'check-idle') and not native.owned
-                    connection.send((True, ending, ''))
                     if ending:
+                        terminal.append((True, True, ''))
                         return
+                    connection.send((True, False, ''))
                 except Exception as exc:
+                    error = str(exc)
                     try:
-                        native.command('cancel')
-                    finally:
-                        connection.send((False, True, str(exc)))
+                        if action != 'probe' and native.owned:
+                            native.command('cancel')
+                    except Exception as cleanup:
+                        error += f'；清理失败: {cleanup}'
+                    terminal.append((False, True, error))
                     return
-        except EOFError:
+        except (EOFError, OSError):
             if native.owned:
-                native.command('cancel')
+                try:
+                    native.command('cancel')
+                except Exception:
+                    logging.exception('父连接断开后的语音清理失败，请核对麦克风')
         finally:
             finished.set()
 
-    threading.Thread(target=commands, daemon=True).start()
-
     message = w.MSG()
     try:
+        if not hwnd:
+            raise ctypes.WinError(ctypes.get_last_error())
+        native = NativeVoice(install)
+        threading.Thread(target=commands, daemon=True).start()
         while not finished.wait(0.01):
             while user.PeekMessageW(ctypes.byref(message), None, 0, 0, 1):
                 user.TranslateMessage(ctypes.byref(message))
                 user.DispatchMessageW(ctypes.byref(message))
+    except Exception as exc:
+        terminal[:] = [(False, True, str(exc))]
     finally:
-        native.detach()
-        user.DestroyWindow(hwnd)
-        connection.close()
+        try:
+            if native is not None:
+                native.detach()
+        except Exception as exc:
+            previous = str(terminal[-1][2]) if terminal and not terminal[-1][0] else ''
+            terminal[:] = [(False, True, f'{previous}；原生连接释放失败: {exc}')]
+        finally:
+            try:
+                if hwnd:
+                    user.DestroyWindow(hwnd)
+                if terminal:
+                    connection.send(terminal[-1])
+            except (EOFError, OSError):
+                logging.exception('无法回传语音工作单元结果')
+            finally:
+                connection.close()
 
 
 class VoiceSession:
@@ -624,52 +690,140 @@ class VoiceSession:
         self.install = str(install)
         self.process = None
         self.connection = None
+        self.lock = threading.RLock()
+        self.uncertain = False
 
     def command(self, action):
+        with self.lock:
+            try:
+                return self._command(action)
+            except (EOFError, OSError, ValueError, TypeError) as exc:
+                self.uncertain = True
+                try:
+                    self._release()
+                except Exception as cleanup:
+                    raise RuntimeError(f'语音连接中断: {exc}；清理失败: {cleanup}') from exc
+                raise RuntimeError(f'语音连接中断或工作单元退出: {exc}；请重新检测麦克风状态') from exc
+
+    def probe(self):
+        with self.lock:
+            current = self.command('probe')
+            if type(current) is not int or current < 0:
+                raise RuntimeError('豆包语音探测返回未验证状态')
+            if current == 0:
+                self.uncertain = False
+            elif self.uncertain:
+                raise RuntimeError('上次语音工作单元异常退出，尚未确认空闲；请在豆包结束录音')
+            return current
+
+    def _release(self, timeout=2):
+        process, connection = self.process, self.connection
+        try:
+            if process is not None:
+                process.join(timeout)
+                if process.is_alive():
+                    self.uncertain = True
+                    process.terminate()
+                    process.join(2)
+                    if process.is_alive():
+                        raise RuntimeError('本程序语音子进程未退出，请检查豆包麦克风')
+                self.process = None
+        finally:
+            if connection is not None:
+                connection.close()
+            self.connection = None
+
+    def _command(self, action):
         import multiprocessing
         if self.process is None:
-            if action not in ('start', 'start-fallback'):
+            if action not in ('start', 'start-fallback', 'probe'):
                 return False
             context = multiprocessing.get_context('spawn')
             self.connection, child = context.Pipe()
             self.process = context.Process(target=native_session, args=(child, self.install), daemon=True)
-            self.process.start()
-            child.close()
+            try:
+                self.process.start()
+            except Exception:
+                self.process = None
+                self.connection.close()
+                self.connection = None
+                raise
+            finally:
+                child.close()
         self.connection.send(action)
-        if not self.connection.poll(25):
-            self.process.terminate()
-            self.process.join(2)
-            self.connection.close()
-            self.process = None
+        if not self.connection.poll(3 if action == 'probe' else 25):
+            self.uncertain = True
+            self._release(0)
             raise RuntimeError('豆包接口响应超时，语音子进程已结束；请检查豆包是否仍在录音')
         success, ending, error = self.connection.recv()
         if ending:
-            self.process.join(3)
-            if self.process.is_alive():
-                self.process.terminate()
-                self.process.join(2)
-            self.connection.close()
-            self.process = None
+            self._release(3)
             logging.info('本次语音子进程已退出，原生连接已释放')
         if not success:
+            self.uncertain = True
             raise RuntimeError(error)
+        if action == 'probe':
+            return error
         return not ending
 
     def close(self):
-        if self.process is not None:
-            if self.process.is_alive():
-                self.process.terminate()
-            self.process.join(2)
-            if self.process.is_alive():
-                raise RuntimeError('本程序语音子进程未退出，请检查豆包麦克风')
-            self.process = None
-        if self.connection is not None:
-            self.connection.close()
-            self.connection = None
+        with self.lock:
+            try:
+                if self.process is not None and self.process.is_alive():
+                    self.command('cancel')
+            finally:
+                self._release(0)
+
+
+class ProcessEntry(ctypes.Structure):
+    _fields_ = [('dwSize', w.DWORD), ('cntUsage', w.DWORD), ('th32ProcessID', w.DWORD),
+                ('th32DefaultHeapID', ctypes.c_size_t), ('th32ModuleID', w.DWORD), ('cntThreads', w.DWORD),
+                ('th32ParentProcessID', w.DWORD), ('pcPriClassBase', ctypes.c_long), ('dwFlags', w.DWORD),
+                ('szExeFile', ctypes.c_wchar * 260)]
+
+
+def running_ime_service():
+    """正在运行的豆包 ImeService.exe 路径；升级包已下载但服务未重启时，它仍是旧版本。"""
+    try:
+        kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+        kernel.CreateToolhelp32Snapshot.restype = w.HANDLE
+        kernel.OpenProcess.restype = w.HANDLE
+        snapshot = kernel.CreateToolhelp32Snapshot(0x2, 0)
+        if not snapshot or snapshot == w.HANDLE(-1).value:
+            return None
+        try:
+            entry = ProcessEntry()
+            entry.dwSize = ctypes.sizeof(ProcessEntry)
+            ok = kernel.Process32FirstW(w.HANDLE(snapshot), ctypes.byref(entry))
+            while ok:
+                if entry.szExeFile.lower() == 'imeservice.exe':
+                    handle = kernel.OpenProcess(0x1000, False, entry.th32ProcessID)
+                    if handle:
+                        try:
+                            buffer = ctypes.create_unicode_buffer(1024)
+                            size = w.DWORD(len(buffer))
+                            if kernel.QueryFullProcessImageNameW(w.HANDLE(handle), 0, buffer, ctypes.byref(size)):
+                                return buffer.value
+                        finally:
+                            kernel.CloseHandle(w.HANDLE(handle))
+                ok = kernel.Process32NextW(w.HANDLE(snapshot), ctypes.byref(entry))
+        finally:
+            kernel.CloseHandle(w.HANDLE(snapshot))
+    except Exception:
+        logging.debug('读取运行中的豆包服务路径失败', exc_info=True)
+    return None
 
 
 def find_install():
     base = Path(os.environ.get('ProgramFiles', 'C:/Program Files')) / 'DoubaoIME' / 'versions'
+    running = running_ime_service()
+    if running:
+        folder = Path(running).parent
+        try:
+            if folder.parent.resolve() == base.resolve() and (folder / 'rpc.dll').is_file():
+                return base / folder.name
+        except OSError:
+            pass
     candidates = sorted(base.glob('v*'), key=lambda p: tuple(int(n) for n in p.name[1:].split('.')), reverse=True)
     for item in candidates:
         if (item / 'rpc.dll').is_file() and (item / 'ImeService.exe').is_file():
@@ -713,8 +867,10 @@ def create_tray_icon_image(state='ready'):
     d.arc((130, 40, 242, 180), start=305, end=55, fill=ink, width=22)
     d.arc((130, 40, 242, 180), start=305, end=55, fill=white, width=10)
 
+    d.ellipse((152, 156, 252, 256), fill=white)
+    d.ellipse((160, 164, 244, 248), fill='#157347' if state == 'ready' else '#B42318')
     if state != 'ready':
-        colors = {'paused': '#DB961B', 'attention': '#E9AC32', 'unconfirmed': '#7957A8'}
+        colors = {'paused': '#B42318', 'attention': '#B42318', 'unconfirmed': '#B42318'}
         d.ellipse((152, 156, 252, 256), fill=white)
         d.ellipse((160, 164, 244, 248), fill=colors.get(state, '#667780'))
         if state == 'paused':
@@ -733,9 +889,24 @@ def build_tray_menu(action_handler, get_status_label, get_pause_label):
         pystray.MenuItem(lambda item: get_status_label(), lambda icon, item: None, enabled=False),
         pystray.MenuItem('打开设置', lambda icon, item: action_handler('show_window'), default=True),
         pystray.MenuItem(lambda item: get_pause_label(), lambda icon, item: action_handler('toggle_pause')),
-        pystray.MenuItem('重新检查', lambda icon, item: action_handler('recheck')),
+        pystray.MenuItem('一键恢复', lambda icon, item: action_handler('recheck')),
         pystray.MenuItem('退出', lambda icon, item: action_handler('exit'))
     )
+
+
+def enable_dpi_awareness():
+    """声明 DPI 感知，避免 Windows 位图拉伸导致界面文字发虚。返回相对 96 DPI 的缩放比。"""
+    try:
+        ctypes.windll.shcore.SetProcessDpiAwareness(2)
+    except Exception:
+        try:
+            ctypes.windll.user32.SetProcessDPIAware()
+        except Exception:
+            logging.exception('DPI 感知声明失败，界面可能仍被系统拉伸')
+    try:
+        return max(1.0, ctypes.windll.user32.GetDpiForSystem() / 96.0)
+    except Exception:
+        return 1.0
 
 
 def main():
@@ -805,7 +976,7 @@ def main():
     user.GetAsyncKeyState.argtypes = [ctypes.c_int]
     user.SendInput.argtypes = [w.UINT, ctypes.POINTER(KeyboardEvent), ctypes.c_int]
     user.SendInput.restype = w.UINT
-    native = VoiceSession(find_install())
+    native = VoiceSession('')
     profile = DoubaoProfile()
     state = InputState(Bindings(None, None))
     physical = PhysicalHold()
@@ -826,29 +997,53 @@ def main():
     tray_ready = threading.Event()
     tray_started_at = time.monotonic()
     tray_queue = queue.SimpleQueue()
-    tray_status_label = '状态: 初始化中'
+    tray_status_label = '状态: 断开'
     side_results = queue.SimpleQueue()
     side_buttons = []
+    side_checked_at = 0.0
+    health_results = queue.SimpleQueue()
+    health_checked_at = 0.0
+    health_generation = 0
+    health_pending = False
+    health_error = '正在检查语音接口、快捷键与输入监听'
+    next_probe_at = 0.0
+    recovering = threading.Event()
+    auto_attempts = 0
+    next_recovery_at = time.monotonic() + RECOVERY_BACKOFF[0]
+    listener = None
+    mapping_valid = False
+    last_tray_state = None
+    native_state = 0
+    session_owned = False
 
     def watch_side_button():
         while not closing.is_set():
-            side_results.put(read_logi_buttons())
+            try:
+                side_results.put((time.monotonic(), read_logi_buttons()))
+            except Exception:
+                side_results.put((time.monotonic(), []))
             closing.wait(2)
 
+    scale = enable_dpi_awareness()
     ui = tk.Tk()
     ui.title('豆包鼠标语音适配')
-    ui.geometry('660x490')
+    ui.tk.call('tk', 'scaling', scale * 96 / 72)
+    ui.geometry(f'{round(700 * scale)}x{round(570 * scale)}')
+    ui.minsize(round(640 * scale), round(530 * scale))
     ui.resizable(True, True)
     ui.withdraw()
     ui.update_idletasks()
 
-    status_var = tk.StringVar(value='适配状态: 正在初始化...')
+    status_var = tk.StringVar(value='断开')
     hold_var = tk.StringVar(value='长按模式: 读取中...')
     toggle_var = tk.StringVar(value='免按模式: 读取中...')
     diag_var = tk.StringVar(value='只接管匹配设置的模拟快捷键。实体键盘透传。退出立即停用。')
 
-    tk.Label(ui, textvariable=status_var, font=('Segoe UI', 10, 'bold'), anchor='w').pack(fill='x', padx=15, pady=(10, 2))
-    tk.Label(ui, text='监听就绪 ≠ 侧键匹配 ≠ 语音成功；下方分别显示检查结果。', fg='#666666', font=('Segoe UI', 8), anchor='w').pack(fill='x', padx=15, pady=(0, 6))
+    status_banner = tk.Label(ui, textvariable=status_var, font=('Segoe UI', 24, 'bold'),
+                             bg='#B42318', fg='white', anchor='w', padx=16, pady=12)
+    status_banner.pack(fill='x', padx=15, pady=(12, 6))
+    checked_var = tk.StringVar(value='最近检查：尚未完成')
+    tk.Label(ui, textvariable=checked_var, fg='#555555', anchor='w').pack(fill='x', padx=15)
 
     kf = tk.LabelFrame(ui, text='豆包快捷键 (只读跟随)', padx=10, pady=6)
     kf.pack(fill='x', padx=15, pady=4)
@@ -859,7 +1054,7 @@ def main():
     side_var = tk.StringVar(value='正在读取罗技下方/后侧键…')
     sf = tk.LabelFrame(ui, text='罗技下方/后侧键（历史设备设置，不代表当前已连接）', padx=10, pady=6)
     sf.pack(fill='x', padx=15, pady=4)
-    tk.Label(sf, textvariable=side_var, wraplength=600, justify='left', anchor='w').pack(fill='x')
+    tk.Label(sf, textvariable=side_var, wraplength=round(600 * scale), justify='left', anchor='w').pack(fill='x')
 
     def launch_settings(kind):
         try:
@@ -876,13 +1071,13 @@ def main():
 
     df = tk.LabelFrame(ui, text='运行诊断与故障提示', padx=10, pady=6)
     df.pack(fill='x', padx=15, pady=4)
-    tk.Label(df, textvariable=diag_var, wraplength=550, justify='left', anchor='w').pack(fill='x')
+    tk.Label(df, textvariable=diag_var, wraplength=round(550 * scale), justify='left', anchor='w').pack(fill='x')
 
     buttons = tk.Frame(ui)
     buttons.pack(pady=10)
     pause_button = tk.Button(buttons, text='暂停适配', width=10)
     pause_button.pack(side='left', padx=6)
-    recheck_button = tk.Button(buttons, text='重新检查', width=10)
+    recheck_button = tk.Button(buttons, text='一键恢复', width=10)
     recheck_button.pack(side='left', padx=6)
     hide_button = tk.Button(buttons, text='隐藏到托盘', width=10)
     hide_button.pack(side='left', padx=6)
@@ -905,16 +1100,49 @@ def main():
         return '恢复适配' if paused else '暂停适配'
 
     def update_tray_state(status_label, state_name):
-        nonlocal tray_status_label
+        nonlocal tray_status_label, last_tray_state
         tray_status_label = f'状态: {status_label}'
         if tray_icon and tray_ready.is_set() and not tray_failed:
             try:
+                current = status_label, state_name, paused
+                if current == last_tray_state:
+                    return
                 tray_icon.title = f'豆包鼠标语音适配 - {status_label}'
                 tray_icon.icon = create_tray_icon_image(state_name)
                 tray_icon.update_menu()
+                last_tray_state = current
             except Exception:
                 logging.exception('更新托盘图标失败')
                 tray_queue.put('tray_failed')
+
+    published = [None]
+
+    def publish_status(connected, reason):
+        # 只在显示内容真正变化时改控件，避免每 50 毫秒重绘造成窗口闪烁。
+        detail = reason + ('\n托盘不可用，请使用此窗口管理。' if tray_failed else '')
+        if health_checked_at:
+            age = max(0, time.monotonic() - health_checked_at)
+            checked = f'最近检查：{age:.0f} 秒前；有效期 {HEALTH_TTL:g} 秒'
+        else:
+            checked = '最近检查：尚无有效连接证据'
+        signature = connected, detail, checked
+        if signature == published[0]:
+            return
+        published[0] = signature
+        status_label = '稳定连接' if connected else '断开'
+        status_var.set(status_label)
+        status_banner.configure(bg='#157347' if connected else '#B42318')
+        diag_var.set(detail)
+        checked_var.set(checked)
+        update_tray_state(status_label, 'ready' if connected else 'attention')
+
+    def voice_ready():
+        now = time.monotonic()
+        return (not closing.is_set() and not paused and not recovering.is_set()
+                and not native_fault.is_set() and health_checked_at > 0
+                and now - health_checked_at <= HEALTH_TTL
+                and now - side_checked_at <= SIDE_TTL
+                and mapping_valid and listener is not None and listener.is_alive())
 
     def tray_setup(icon):
         try:
@@ -939,6 +1167,8 @@ def main():
 
     def tray_fallback():
         nonlocal tray_failed
+        if tray_failed:
+            return
         tray_failed = True
         hide_button.configure(state='disabled')
         show_window()
@@ -964,23 +1194,19 @@ def main():
         tray_fallback()
 
     def send(actions):
-        if not native_fault.is_set():
+        if not native_fault.is_set() and not recovering.is_set():
+            busy = session_owned or native_state != 0
             for action in actions:
-                jobs.put_nowait(action)
+                if action not in ('start', 'start-fallback') or (voice_ready() and not busy):
+                    jobs.put_nowait(action)
 
     def worker():
+        nonlocal native, listener, session_owned, native_state
         fallback_owned = False
         while True:
             action = jobs.get()
             try:
                 if action == 'exit':
-                    if not native_fault.is_set():
-                        try:
-                            native.command('cancel')
-                        except Exception as exc:
-                            native_fault.set()
-                            errors.put(str(exc))
-                            logging.exception('退出时语音取消失败')
                     try:
                         native.close()
                     except Exception as exc:
@@ -988,7 +1214,65 @@ def main():
                         errors.put(str(exc))
                         logging.exception('语音子进程清理失败')
                     return
+                if isinstance(action, tuple):
+                    kind, generation = action
+                    started = time.monotonic()
+                    payload = None
+                    error = ''
+                    try:
+                        if closing.is_set():
+                            continue
+                        if kind == 'recover':
+                            fallback_owned = False
+                            session_owned = False
+                            native_state = 0
+                            try:
+                                native.close()
+                            except Exception:
+                                if native.process is not None:
+                                    raise
+                                logging.exception('旧会话清理不完整，将只读确认豆包空闲状态')
+                            if closing.is_set():
+                                continue
+                            install = find_install()
+                            native = VoiceSession(install)
+                            if listener is None or not listener.is_alive():
+                                previous = listener
+                                if previous is not None:
+                                    previous.stop()
+                                    if hasattr(previous, 'join'):
+                                        previous.join(timeout=1)
+                                    if previous.is_alive():
+                                        raise RuntimeError('旧输入监听尚未退出，请稍后再一键恢复')
+                                replacement = create_listener()
+                                with lock:
+                                    if closing.is_set():
+                                        replacement.stop()
+                                        continue
+                                    listener = replacement
+                            config_stat = Path(args.config).stat()
+                            bindings = read_bindings(args.config)
+                            buttons = read_logi_buttons()
+                            payload = (bindings, buttons, (config_stat.st_mtime_ns, config_stat.st_size))
+                        else:
+                            install = str(find_install())
+                            if native.install != install:
+                                if native.process is not None:
+                                    raise RuntimeError('豆包安装版本已变更，请一键恢复')
+                                native.install = install
+                        current = native.probe()
+                        if kind == 'recover' and current != 0:
+                            raise RuntimeError('恢复后尚未确认豆包空闲，请在豆包结束录音再一键恢复')
+                        if kind == 'probe':
+                            payload = current
+                    except Exception as exc:
+                        error = str(exc)
+                    if not closing.is_set():
+                        health_results.put((kind, generation, started, error, payload))
+                    continue
                 if closing.is_set() or native_fault.is_set():
+                    continue
+                if recovering.is_set() or (action in ('start', 'start-fallback') and not voice_ready()):
                     continue
                 logging.info('会话命令 %s', action)
                 if action in ('start', 'start-fallback') and native.process is not None:
@@ -1002,12 +1286,18 @@ def main():
                     if fallback_owned:
                         native.command('stop')
                         fallback_owned = False
+                        session_owned = False
                 else:
                     native.command(action)
+                    if action in ('start', 'start-fallback'):
+                        session_owned = True
+                    elif action in ('stop', 'cancel', 'check-idle'):
+                        session_owned = False
                     if action in ('stop', 'cancel'):
                         fallback_owned = False
             except Exception as exc:
                 native_fault.set()
+                session_owned = False
                 logging.exception('语音命令失败')
                 errors.put(str(exc))
             finally:
@@ -1015,8 +1305,10 @@ def main():
 
     threading.Thread(target=worker, name='DoubaoNativeVoice', daemon=True).start()
 
-    def event_filter(msg, data):
+    def event_filter(msg, data, source=None):
         nonlocal target
+        if source is not None and source is not listener:
+            return False
         if msg not in (0x100, 0x101, 0x104, 0x105):
             return False
         injected = bool(data.flags & 0x12)
@@ -1034,7 +1326,7 @@ def main():
             with lock:
                 if closing.is_set():
                     return False
-                send(physical.key(vk, msg in (0x100, 0x104), allowed and not paused and not native_fault.is_set(), time.monotonic()))
+                send(physical.key(vk, msg in (0x100, 0x104), allowed and voice_ready(), time.monotonic()))
             if vk not in MOD_VKS:
                 return False
         with lock:
@@ -1047,7 +1339,8 @@ def main():
             if foreground_changed:
                 send(state.reset(state.bindings))
             suppressed, actions = state.key(vk, down, injected, allowed and not foreground_changed and not paused,
-                                            time.monotonic(), voice_enabled=not native_fault.is_set())
+                                            time.monotonic(), voice_enabled=not native_fault.is_set(),
+                                            busy=session_owned or native_state != 0, mine=session_owned)
             if injected and down and suppressed:
                 # 只记已经因本次匹配而隐藏主键的修饰键；未匹配组合仍完整透传。
                 state.menu_modifiers.update((state.pressed & MENU_MODIFIERS) - state.swallowed)
@@ -1063,21 +1356,31 @@ def main():
             listener.suppress_event()
         return False
 
-    listener = keyboard.Listener(win32_event_filter=event_filter)
+    def create_listener():
+        replacement = keyboard.Listener(win32_event_filter=lambda msg, data: event_filter(msg, data, replacement))
+        ready = threading.Event()
+        startup_errors = []
+        def await_ready():
+            try:
+                replacement.wait()
+            except Exception as exc:
+                startup_errors.append(str(exc))
+            finally:
+                ready.set()
+        try:
+            replacement.start()
+            threading.Thread(target=await_ready, name='InputListenerReady', daemon=True).start()
+            if not ready.wait(2) or startup_errors or not replacement.is_alive() or closing.is_set():
+                raise RuntimeError('输入监听启动失败或超时，请一键恢复')
+            return replacement
+        except Exception:
+            replacement.stop()
+            raise
+
     try:
-        listener.start()
-        listener.wait()
-    except Exception:
-        closing.set()
-        listener.stop()
-        jobs.put_nowait('exit')
-        if tray_icon:
-            tray_icon.stop()
-        profile.close()
-        for handle in (stop_event, show_event, instance):
-            kernel.CloseHandle(handle)
-        ui.destroy()
-        raise
+        listener = create_listener()
+    except Exception as exc:
+        health_error = str(exc)
 
     def reset(bindings):
         with lock:
@@ -1085,30 +1388,31 @@ def main():
             send(physical.reset(bindings.hold))
 
     def toggle_pause():
-        nonlocal paused
+        nonlocal paused, health_checked_at, health_generation
         paused = not paused
         reset(state.bindings)
+        health_checked_at = 0
+        health_generation += 1
         if not paused:
             fingerprint_reset()
         pause_button.configure(text=get_pause_label())
-        if not failure and not native_fault.is_set():
-            status_var.set('适配状态: 已暂停' if paused else '适配状态: 正在重新检查')
-            update_tray_state('已暂停' if paused else '正在重新检查', 'paused' if paused else 'attention')
+        publish_status(False, '已暂停适配' if paused else '正在重新检查连接')
 
-    def manual_recheck():
-        nonlocal fingerprint, failure
-        if native_fault.is_set():
-            if jobs.unfinished_tasks or native.process is not None:
-                messagebox.showwarning('仍需处理', '语音工作单元尚未退出，请先在豆包结束录音，再退出本程序后重新启动。', parent=ui)
-                return
-            if not messagebox.askyesno('确认麦克风状态', '请先在豆包和系统中确认录音已停止。\n是否已检查并允许恢复适配？', parent=ui):
-                return
-            native_fault.clear()
-        logging.info('用户请求重新检查配置与状态')
-        fingerprint = None
-        failure = None
-        status_var.set('适配状态: 正在重新检查')
-        update_tray_state('正在重新检查', 'attention')
+    def manual_recheck(automatic=False):
+        nonlocal health_checked_at, health_generation, health_pending, auto_attempts
+        if closing.is_set() or recovering.is_set():
+            return
+        if not automatic:
+            auto_attempts = 0
+        with lock:
+            recovering.set()
+            health_checked_at = 0
+            health_generation += 1
+            state.reset(state.bindings)
+            physical.reset(state.bindings.hold)
+            health_pending = True
+            jobs.put_nowait(('recover', health_generation))
+        publish_status(False, '正在恢复：清理本程序语音会话、重建失效监听并重新检查')
 
     pause_button.configure(command=toggle_pause)
     recheck_button.configure(command=manual_recheck)
@@ -1128,9 +1432,10 @@ def main():
             allowed = False
             closing.set()
             jobs.put_nowait('exit')
-        listener.stop()
+        if listener is not None:
+            listener.stop()
         show_window()
-        status_var.set('适配状态: 正在结束语音会话并卸载监听')
+        publish_status(False, '正在结束语音会话并卸载监听')
         diag_var.set('正在退出，原生停止失败时须核对豆包麦克风状态。')
         poll_exit()
 
@@ -1156,7 +1461,10 @@ def main():
     side_reader_thread.start()
 
     def tick():
-        nonlocal fingerprint, allowed, target, profile, failure, side_buttons
+        nonlocal fingerprint, allowed, target, profile, failure, side_buttons, side_checked_at
+        nonlocal health_checked_at, health_generation, health_pending, health_error, next_probe_at
+        nonlocal auto_attempts, next_recovery_at
+        nonlocal mapping_valid, native_state, session_owned
         if closing.is_set():
             return
         if kernel.WaitForSingleObject(stop_event, 0) == 0:
@@ -1183,18 +1491,77 @@ def main():
 
         if not tray_failed and not tray_ready.is_set() and time.monotonic() - tray_started_at > 3:
             tray_fallback()
+        while not health_results.empty():
+            kind, generation, checked_at, error, payload = health_results.get_nowait()
+            if kind == 'recover':
+                recovering.clear()
+            if generation != health_generation:
+                health_pending = False
+                continue
+            health_pending = False
+            health_checked_at = 0
+            if not error and kind == 'recover' and payload is not None:
+                bindings, buttons, recovered_fingerprint = payload
+                try:
+                    stat = Path(args.config).stat()
+                except OSError:
+                    stat = None
+                if stat is None or recovered_fingerprint != (stat.st_mtime_ns, stat.st_size):
+                    error = '恢复期间配置已变化，正在重新检查'
+                else:
+                    reset(bindings)
+                    side_buttons = buttons
+                    side_checked_at = checked_at
+                    fingerprint = recovered_fingerprint
+                    hold_var.set(f'长按模式: {bindings.hold.label() if bindings.hold else "禁用"}')
+                    toggle_var.set(f'免按模式: {bindings.toggle.label() if bindings.toggle else "禁用"}')
+                    side_status, _ = side_button_status(buttons, bindings)
+                    side_var.set(side_button_status(buttons, bindings)[1])
+                    mapping_valid = side_status == '按键设置匹配'
+                    if side_status != '按键设置匹配':
+                        error = '鼠标侧键尚未匹配，请在豆包与 Logi Options+ 保存相同组合后一键恢复'
+                    elif listener is None or not listener.is_alive():
+                        error = '输入监听未就绪，请一键恢复'
+                    else:
+                        native_fault.clear()
+                        failure = None
+                        while not errors.empty():
+                            errors.get_nowait()
+            if not error:
+                health_checked_at = checked_at
+                health_error = ''
+                if kind == 'probe' and type(payload) is int:
+                    native_state = payload
+                    if payload == 0:
+                        session_owned = False
+                elif kind == 'recover':
+                    native_state = 0
+            else:
+                health_error = error
+            next_probe_at = time.monotonic() + HEALTH_INTERVAL
+            if kind == 'recover':
+                next_recovery_at = time.monotonic() + RECOVERY_BACKOFF[min(auto_attempts, len(RECOVERY_BACKOFF) - 1)]
+        if recovering.is_set():
+            publish_status(False, '正在恢复：等待工作单元清理与只读复核，未启动录音')
+            ui.after(50, tick)
+            return
         voice_fault_only = False
         try:
-            if not listener.is_alive():
+            if listener is None or not listener.is_alive():
                 raise RuntimeError('输入监听已停止')
             while not side_results.empty():
-                latest_buttons = side_results.get_nowait()
+                side_checked_at, latest_buttons = side_results.get_nowait()
                 if latest_buttons != side_buttons:
                     side_buttons = latest_buttons
                     fingerprint = None
+                    health_checked_at = 0
+                    health_generation += 1
             stat = Path(args.config).stat()
             current = stat.st_mtime_ns, stat.st_size
             if current != fingerprint or (failure is not None and not native_fault.is_set()):
+                if current != fingerprint:
+                    health_checked_at = 0
+                    health_generation += 1
                 bindings = read_bindings(args.config)
                 if bindings != state.bindings:
                     reset(bindings)
@@ -1203,11 +1570,8 @@ def main():
                 hold_var.set(f'长按模式: {bindings.hold.label() if bindings.hold else "禁用"}')
                 toggle_var.set(f'免按模式: {bindings.toggle.label() if bindings.toggle else "禁用"}')
                 side_status, side_detail = side_button_status(side_buttons, bindings)
+                mapping_valid = side_status == '按键设置匹配'
                 side_var.set(side_detail)
-                curr_status = '已暂停' if paused else f'监听已就绪；{side_status}'
-                status_var.set(f'适配状态: {curr_status}')
-                diag_var.set('豆包配置可读；按键匹配不代表已完成实体语音验证。' + ('托盘不可用，请使用此窗口管理。' if tray_failed else '') + '更换快捷键只需在豆包与 Logi Options+ 设置中修改。')
-                update_tray_state(curr_status, 'paused' if paused else ('ready' if side_status == '按键设置匹配' else 'attention'))
                 logging.info('设置已重载 %s', bindings.label())
             hwnd = user.GetForegroundWindow()
             pid = w.DWORD()
@@ -1241,11 +1605,11 @@ def main():
                 voice_fault_only = True
                 if not errors.empty():
                     failure = errors.get_nowait()
-                raise RuntimeError(failure or '豆包录音状态未确认，请先核对麦克风')
+                raise RuntimeError(failure or '语音调用异常，请一键恢复并只读确认豆包状态')
             with lock:
                 while not physical_events.empty():
                     vk, down = physical_events.get_nowait()
-                    send(physical.key(vk, down, allowed and not paused and not native_fault.is_set(), time.monotonic()))
+                    send(physical.key(vk, down, allowed and voice_ready(), time.monotonic()))
                 if target and hwnd != target and (state.active or state.pending):
                     send(state.reset(state.bindings))
                 if target and hwnd != target and (physical.active or physical.pending_at is not None):
@@ -1259,8 +1623,9 @@ def main():
                     send(physical.reset(physical.shortcut))
                 else:
                     send(state.tick(time.monotonic()))
-                    send(physical.tick(time.monotonic()))
-            if not listener.is_alive():
+                    if voice_ready():
+                        send(physical.tick(time.monotonic()))
+            if listener is None or not listener.is_alive():
                 raise RuntimeError('输入监听已停止')
             if native_fault.is_set():
                 raise RuntimeError(errors.get_nowait() if not errors.empty() else '豆包录音状态未确认')
@@ -1276,18 +1641,42 @@ def main():
             curr_exc = str(exc)
             side_var.set('当前适配检查失败，侧键匹配状态暂未确认；请先查看下方故障提示。')
             if native_fault.is_set():
-                status_var.set('适配状态: 录音状态未确认 (需要处理)')
                 guard_note = '豆包前台仍屏蔽已配置的模拟语音组合；暂停或切换输入法后透传。' if voice_fault_only else '当前未拦截新按键。'
-                diag_var.set(f'故障警示: {curr_exc}\n已停用语音命令并禁止自动重试。{guard_note}请在豆包核对麦克风状态后，点击“重新检查”确认恢复。')
-                update_tray_state('录音状态未确认', 'unconfirmed')
+                health_error = f'{curr_exc}\n已停用语音启动。{guard_note}请点击“一键恢复”；若豆包仍在录音，请先在豆包结束录音。'
             else:
-                status_var.set('适配状态: 需要处理')
-                diag_var.set(f'已停用，未继续拦截按键: {curr_exc}')
-                update_tray_state('需要处理', 'attention')
+                health_error = f'已停用，未继续拦截按键: {curr_exc}；请一键恢复'
             if failure != curr_exc:
                 logging.error('停用 %s', exc)
             failure = curr_exc
-        ui.after(1000 if failure else 50, tick)
+            health_checked_at = 0
+        now = time.monotonic()
+        side_status, _ = side_button_status(side_buttons, state.bindings)
+        evidence_ok = side_status == '按键设置匹配' and now - side_checked_at <= SIDE_TTL
+        connected = voice_ready() and evidence_ok and failure is None
+        if connected:
+            auto_attempts = 0
+            next_recovery_at = now + RECOVERY_BACKOFF[0]
+        if paused:
+            reason = '已暂停适配'
+        elif not evidence_ok:
+            reason = '鼠标侧键配置未匹配或读取结果过期，请检查 Logi Options+ 与豆包设置'
+        elif connected and native_state != 0:
+            reason = ('豆包语音会话进行中（录音或识别上屏）；再按一次侧键即结束本次录音。'
+                      '本次录音若不是本程序启动，按键已交还豆包原生快捷键。')
+        elif connected:
+            reason = '语音接口只读响应、快捷键与监听检查通过；设备在线与实际录音出字仍需实体操作验证。'
+        else:
+            reason = health_error or '健康证据已过期，正在重新检测'
+        publish_status(connected, reason)
+        if not paused and not health_pending and not native_fault.is_set() and failure is None and now >= next_probe_at:
+            health_pending = True
+            jobs.put_nowait(('probe', health_generation))
+            next_probe_at = now + HEALTH_INTERVAL
+        if not paused and not recovering.is_set() and not connected and now >= next_recovery_at and auto_attempts < len(RECOVERY_BACKOFF):
+            auto_attempts += 1
+            next_recovery_at = now + RECOVERY_BACKOFF[auto_attempts - 1]
+            manual_recheck(automatic=True)
+        ui.after(50, tick)
 
     ui.after(0, tick)
     try:
@@ -1295,12 +1684,15 @@ def main():
     finally:
         if not closing.is_set():
             closing.set()
-            listener.stop()
+            if listener is not None:
+                listener.stop()
             jobs.put('exit')
         side_reader_thread.join(timeout=0.5)
 
 
 if __name__ == '__main__':
+    import multiprocessing
+    multiprocessing.freeze_support()
     try:
         main()
     except Exception as exc:

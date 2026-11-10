@@ -139,7 +139,8 @@ class TrayAndLifecycleTests(unittest.TestCase):
             }
         }
         self.config_path.write_text(json.dumps(self.config_data), encoding='utf-8')
-        reader = patch.object(m, 'read_logi_buttons', return_value=[])
+        reader = patch.object(m, 'read_logi_buttons', return_value=[
+            m.SideButton('测试鼠标', m.Shortcut(0, frozenset({0xA5})))])
         reader.start()
         self.addCleanup(reader.stop)
 
@@ -197,8 +198,9 @@ class TrayAndLifecycleTests(unittest.TestCase):
 
         class SafeVoice:
             process = None
-            def __init__(self, install): pass
-            def command(self, act): return False
+            def __init__(self, install): self.install = str(install)
+            def probe(self): return 0
+            def command(self, action): return False
             def close(self): pass
 
         class SafeProfile:
@@ -274,7 +276,7 @@ class TrayAndLifecycleTests(unittest.TestCase):
 
                 # 5. 重新检查：验证不会新增 tick 链（单一tick链无多余 after_idle）
                 idle_count_before = len(after_idle_calls)
-                buttons['重新检查'].invoke()
+                buttons['一键恢复'].invoke()
                 recorded['recheck_new_tick_chains'] = len(after_idle_calls) - idle_count_before
 
                 # 6. 正常退出清理：点击退出按钮
@@ -310,7 +312,8 @@ class TrayAndLifecycleTests(unittest.TestCase):
 
         class SafeVoice:
             process = None
-            def __init__(self, install): pass
+            def __init__(self, install): self.install = str(install)
+            def probe(self): return 0
             def command(self, act): return False
             def close(self): pass
 
@@ -370,8 +373,8 @@ class TrayAndLifecycleTests(unittest.TestCase):
         self.assertEqual(recorded.get('state_after_hide_click'), 'normal')
         self.assertEqual(recorded.get('state_after_wm_close'), 'normal')
 
-    def test_native_fault_latch_and_recheck_confirmation(self):
-        """测试原生语音错误触发 threading.Event 锁存，必须经 askyesno 确认才允许恢复。"""
+    def test_native_fault_latch_and_verified_recovery(self):
+        """语音错误后保持断开，恢复清理及只读复核后才能重新允许触发。"""
         import tkinter as tk
         from tkinter import messagebox
 
@@ -390,6 +393,8 @@ class TrayAndLifecycleTests(unittest.TestCase):
             process = None
             def __init__(self, install):
                 self.call_count = 0
+                self.install = str(install)
+            def probe(self): return 0
             def command(self, act):
                 if act in ('start', 'start-fallback'):
                     self.call_count += 1
@@ -438,15 +443,15 @@ class TrayAndLifecycleTests(unittest.TestCase):
                 labels = [w.cget('text') for w in widgets if isinstance(w, tk.Label)]
                 buttons = {w.cget('text'): w for w in widgets if isinstance(w, tk.Button)}
 
-                recorded_states['fault_labels'] = [t for t in labels if '录音状态未确认' in t or '需要处理' in t]
+                recorded_states['fault_labels'] = [t for t in labels if t == '断开']
 
                 # 用户拒绝恢复确认
                 dialog_history['answer'] = False
-                buttons['重新检查'].invoke()
+                buttons['一键恢复'].invoke()
 
                 # 用户同意恢复确认
                 dialog_history['answer'] = True
-                buttons['重新检查'].invoke()
+                buttons['一键恢复'].invoke()
 
                 # 等待下一次 tick 执行完毕 (failure 期间 tick 间隔为 1000ms)
                 root.after(1150, step_finish)
@@ -463,7 +468,7 @@ class TrayAndLifecycleTests(unittest.TestCase):
                 labels = [w.cget('text') for w in widgets if isinstance(w, tk.Label)]
                 buttons = {w.cget('text'): w for w in widgets if isinstance(w, tk.Button)}
 
-                recorded_states['recovered_labels'] = [t for t in labels if '适配状态' in t]
+                recorded_states['recovered_labels'] = [t for t in labels if t in ('断开', '稳定连接')]
                 buttons['退出程序'].invoke()
 
             root.after(100, step_init)
@@ -488,10 +493,9 @@ class TrayAndLifecycleTests(unittest.TestCase):
              patch.object(sys, 'argv', ['doubao_bridge', '--config', str(self.config_path)]):
             m.main()
 
-        # 验证错误已锁存，并必须通过 askyesno 确认
-        self.assertTrue(any('录音状态未确认' in t for t in recorded_states.get('fault_labels', [])))
-        self.assertEqual(len(dialog_history['askyesno']), 2)
-        self.assertTrue(any('监听已就绪' in t for t in recorded_states.get('recovered_labels', [])))
+        self.assertIn('断开', recorded_states.get('fault_labels', []))
+        self.assertEqual(len(dialog_history['askyesno']), 0)
+        self.assertIn('稳定连接', recorded_states.get('recovered_labels', []))
 
     def test_pending_hold_is_cancelled_when_foreground_changes(self):
         import tkinter as tk
@@ -517,7 +521,8 @@ class TrayAndLifecycleTests(unittest.TestCase):
 
                 class Voice:
                     process = None
-                    def __init__(self, install): pass
+                    def __init__(self, install): self.install = str(install)
+                    def probe(self): return 0
                     def command(self, action): commands.append(action); return False
                     def close(self): pass
 
@@ -603,7 +608,8 @@ class TrayAndLifecycleTests(unittest.TestCase):
 
                 class SlowVoice:
                     process = None
-                    def __init__(self, install): pass
+                    def __init__(self, install): self.install = str(install)
+                    def probe(self): return 0
                     def command(self, action):
                         commands.append(action)
                         if action == 'start': self.process = object()
@@ -652,7 +658,7 @@ class TrayAndLifecycleTests(unittest.TestCase):
                             self.assertEqual(commands, expected)
                             if busy:
                                 labels = [w.cget('text') for w in widgets(root) if isinstance(w, tk.Label)]
-                                self.assertTrue(any('录音状态未确认' in text for text in labels))
+                                self.assertIn('断开', labels)
                             observed['checked'] = True
                         except BaseException as exc:
                             failures.append(exc)
@@ -668,7 +674,17 @@ class TrayAndLifecycleTests(unittest.TestCase):
                     def start():
                         tap()
                         wait_for(lambda: 'start' in commands, stop)
-                    root.after(100, start)
+
+                    def begin():
+                        # 先等主状态进入“稳定连接”，确保健康证据已就绪，
+                        # 避免首个按键因证据尚未落地而被有意丢弃。
+                        labels = [w.cget('text') for w in widgets(root) if isinstance(w, tk.Label)]
+                        if '稳定连接' in labels:
+                            start()
+                        else:
+                            root.after(20, begin)
+
+                    root.after(50, begin)
                     return root
 
                 fake = types.SimpleNamespace(keyboard=types.SimpleNamespace(Listener=Listener))

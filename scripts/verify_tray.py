@@ -77,7 +77,10 @@ def verify():
         process = None
 
         def __init__(self, install):
-            pass
+            self.install = str(install)
+
+        def probe(self):
+            return 0
 
         def command(self, action):
             native_calls.append(action)
@@ -146,15 +149,14 @@ def verify():
                 assert root.state() == 'normal'
                 observed['show_event_opens_window'] = True
                 button(root, '暂停适配').invoke()
-                assert '已暂停' in icons[0].menu.items[0].text
+                assert '断开' in icons[0].menu.items[0].text
                 observed['pause_state'] = True
                 button(root, '恢复适配').invoke()
-                button(root, '重新检查').invoke()
+                button(root, '一键恢复').invoke()
             elif stage == 3:
-                assert '监听已就绪' in icons[0].menu.items[0].text
-                assert '侧键未确认' in icons[0].menu.items[0].text
+                assert '断开' in icons[0].menu.items[0].text
                 assert not native_calls, native_calls
-                observed['recheck_without_voice'] = True
+                observed['recovery_without_voice'] = True
                 with patch.object(bridge, 'open_settings') as launch:
                     for label in ('打开豆包', '豆包输入法设置', '罗技按键设置'):
                         button(root, label).invoke()
@@ -192,7 +194,7 @@ def verify():
             thread.join(2)
             assert not thread.is_alive(), '托盘线程未退出'
     assert listener_instances and not any(x.alive for x in listener_instances)
-    assert native_calls == ['cancel'], native_calls
+    assert not native_calls, native_calls
     assert not failures, failures
     observed.pop('root', None)
     observed['clean_shutdown'] = True

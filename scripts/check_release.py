@@ -16,13 +16,16 @@ FILES = (
     'tests/test_native_lifecycle.py', 'tests/test_tray.py',
     'scripts/verify_tray.py', 'docs/tray-verification.md',
     'tests/test_side_button.py', 'scripts/verify_side_button.py',
+    'tests/test_connection_recovery.py', 'tests/test_connection_ui.py',
     'tests/test_menu_suppression.py', 'scripts/build_release.py',
+    'tests/test_find_install.py',
     'docs/releases/v0.2.0-rc.1.md', 'docs/releases/v0.2.0-rc.2.md',
     'scripts/doctor.py', 'tests/test_doctor.py',
     'docs/releases/v0.2.0-rc.3.md', 'docs/releases/v0.2.0-rc.4.md',
+    'docs/releases/v0.2.0-rc.5.md',
 )
 # 仅对 src/doubao_mouse_bridge.py 按 LF 计算指纹，不覆盖 FILES 全集，也不代表实体验收。
-SOURCE_SHA256 = '5518b1b21190c4b6ab0ca4f4dc37ee37dbc62cd70ce0bce6d89f5d4162ab7a2c'
+SOURCE_SHA256 = 'c245101d5c0408e330825c6d33936564f002397bc31ebdd3eee4d7c721b94ba6'
 IGNORED_DIRS = {'.git', '.venv', '__pycache__', 'dist', '.claude'}
 PATTERNS = {
     '本机用户绝对路径': re.compile(r'(?:[A-Za-z]:[\\/]Users[\\/]|/home/)[A-Za-z0-9_.-]+[\\/]', re.I),

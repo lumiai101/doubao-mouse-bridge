@@ -122,6 +122,33 @@ class BridgeTests(unittest.TestCase):
         state.key(162, False, True, True, 0.3)
         self.assertEqual(state.key(163, True, True, True, 1), (False, []))
 
+    def test_live_own_session_toggle_ends_instead_of_restarting(self):
+        """第二次按侧键时，本程序会话仍在进行：该按即结束，不再新建录音。"""
+        state = m.InputState(m.Bindings(None, self.ctrl_k))
+        state.key(162, True, True, True, 0)
+        self.assertEqual(state.key(75, True, True, True, 0.1, busy=True, mine=True), (True, ['stop']))
+        self.assertIsNone(state.active)
+
+    def test_foreign_live_session_is_passed_through_untouched(self):
+        """其他入口正在录音：不吞键、不发任何命令，交还原生快捷键。"""
+        state = m.InputState(m.Bindings(None, self.ctrl_k))
+        state.key(162, True, True, True, 0)
+        self.assertEqual(state.key(75, True, True, True, 0.1, busy=True, mine=False), (False, []))
+        self.assertEqual(state.key(75, False, True, True, 0.2, busy=True, mine=False), (False, []))
+        self.assertEqual(state.key(162, False, True, True, 0.3, busy=True, mine=False), (False, []))
+        self.assertIsNone(state.active)
+
+    def test_own_active_toggle_stops_even_when_session_state_known(self):
+        """已经由本程序启动了切换会话：再次按下仍走结束，不重复启动。"""
+        state = m.InputState(m.Bindings(None, self.ctrl_k))
+        state.key(162, True, True, True, 0)
+        self.assertEqual(state.key(75, True, True, True, 0.1), (True, ['start']))
+        state.key(75, False, True, True, 0.2)
+        state.key(162, False, True, True, 0.3)
+        self.assertEqual(state.key(162, True, True, True, 1, busy=True, mine=True), (False, []))
+        self.assertEqual(state.key(75, True, True, True, 1.1, busy=True, mine=True), (True, ['stop']))
+        self.assertIsNone(state.active)
+
     def test_settings_window_passes(self):
         state = m.InputState(m.Bindings(self.alt, None))
         self.assertEqual(state.key(165, True, True, False, 0), (False, []))
@@ -297,6 +324,22 @@ class NativeVoiceTests(unittest.TestCase):
         client.command('cancel')
         self.assertEqual(client.calls, [1013])
         self.assertFalse(client.owned)
+
+    def test_stop_is_sent_while_session_is_recognizing(self):
+        """会话已从录音态 3 进入识别态 19（豆包会在录音中实时识别），结束命令仍须下发。"""
+        client = self.client([19, 19, 19, 0])
+        with patch.object(m.time, 'sleep'):
+            client.command('stop')
+        self.assertEqual(client.calls.count(1008), 1)
+        self.assertFalse(client.owned)
+        self.assertNotIn(1013, client.calls)
+
+    def test_stop_without_ownership_never_calls_native(self):
+        """本程序没有持有会话时，结束命令不得触发任何原生调用或取消失败。"""
+        client = self.client([])
+        client.owned = False
+        client.command('stop')
+        self.assertEqual(client.calls, [])
 
 
 if __name__ == '__main__':
