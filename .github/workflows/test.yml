@@ -1,24 +1,48 @@
-name: Test
+name: CI
 
-# 默认使用本地验证，GitHub Actions 仅保留手动入口。
+# 公开仓库的标准 Runner 不计费；本地命令与这里逐条一致，见 CONTRIBUTING.md。
 on:
+  push:
+    branches: [main]
+  pull_request:
   workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  unit-tests:
+  offline-tests:
+    name: offline-tests
     runs-on: windows-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.13'
           architecture: x64
+          cache: pip
+          cache-dependency-path: requirements.txt
       - name: Install test dependencies
-        run: python -m pip install -r requirements.txt
+        run: python -m pip install --disable-pip-version-check -r requirements.txt
       - name: Run offline unit tests
-        run: python -B -I -m unittest discover -s tests -p "test_*.py" -v
-      - name: Check release files
-        run: python -B -I scripts/check_release.py
+        run: python -X utf8 -B -I -m unittest discover -s tests -p "test_*.py" -v
+
+  # 发布指纹只在 main 与手动触发时核对：分支上的源码本来就和已发布版本不同。
+  release-check:
+    name: release-check
+    if: github.event_name != 'pull_request'
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          architecture: x64
+      - name: Check public release file set
+        run: python -X utf8 -B -I scripts/check_release.py
