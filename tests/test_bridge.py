@@ -5,6 +5,13 @@ import sys
 import tempfile
 import unittest
 from unittest.mock import patch
+import os
+
+if sys.platform == 'win32':
+    _orig_mkdir = os.mkdir
+    def _safe_mkdir(path, mode=0o777, *args, **kwargs):
+        return _orig_mkdir(path, *args, **kwargs)
+    os.mkdir = _safe_mkdir
 
 spec = importlib.util.spec_from_file_location('doubao_mouse_bridge', Path(__file__).resolve().parents[1] / 'src' / 'doubao_mouse_bridge.py')
 m = importlib.util.module_from_spec(spec)
@@ -184,6 +191,33 @@ class BridgeTests(unittest.TestCase):
             path = Path(directory) / 'config.json'
             path.write_text(json.dumps(config), encoding='utf-8')
             self.assertEqual(m.read_bindings(path), m.Bindings(None, None))
+
+    def test_schema_19_after_ime_update_reads_bindings(self):
+        config = {'schemaVersion': 19, 'voice': {
+            'enableGlobalVoiceShortcut': True, 'enableVoiceShortcut': True,
+            'globalVoiceMode': 'continuous', 'hasShortcutConflict': False,
+            'smartTextEnabled': True, 'spaceAtNewline': 1,
+            'voiceLongPressShortcut': {'keyCode': 0, 'modifierFlags': 2049},
+            'voiceLongPressShortcutMode': None,
+            'voiceShortcut': {'keyCode': 221, 'modifierFlags': 16392},
+            'voiceShortcutMode': None}}
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as directory:
+            path = Path(directory) / 'config.json'
+            path.write_text(json.dumps(config), encoding='utf-8')
+            bindings = m.read_bindings(path)
+        self.assertEqual(bindings.hold, self.alt)
+        self.assertEqual(bindings.toggle, m.decode_shortcut({'keyCode': 221, 'modifierFlags': 16392}))
+
+    def test_unknown_schema_still_rejected_and_names_version(self):
+        for version in (17, 20, None):
+            config = {'schemaVersion': version, 'voice': {
+                'voiceLongPressShortcut': {'keyCode': 0, 'modifierFlags': 2049},
+                'voiceShortcut': {'keyCode': 75, 'modifierFlags': 258}}}
+            with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as directory:
+                path = Path(directory) / 'config.json'
+                path.write_text(json.dumps(config), encoding='utf-8')
+                with self.assertRaisesRegex(ValueError, f'未验证的豆包配置版本.*{version}'):
+                    m.read_bindings(path)
 
     def test_config_read_never_writes(self):
         config = {'schemaVersion': 12, 'voice': {
