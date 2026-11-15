@@ -1,5 +1,18 @@
 # 变更记录
 
+## 0.2.0-rc.6 · 2026-11-15
+
+首个附带一键安装程序的预发布版。修复合并后豆包升级导致“重启即失效”的问题。
+
+1. 放行豆包 v1.1.1.5、v1.1.1.3、v1.0.0.23 的 `rpc.dll`，配置格式兼容 schemaVersion 19。此前只放行 schemaVersion 12 与 16，豆包升级到 v1.1.1.5（schemaVersion 19）后程序拒绝启用，重启后鼠标侧键不再触发。
+2. 语音会话释放与命令下发不再对空句柄调用（`'NoneType' object has no attribute 'send'`），一键恢复可清理残留进程并重建可探测会话。
+3. 首次提供一键安装程序 `DoubaoMouseBridge-v0.2.0-rc.6-installer.zip`：校验安装包与 EXE 的 SHA-256、关闭旧进程、备份旧安装、安装到 `%LOCALAPPDATA%\Programs\DoubaoMouseBridge`、启动并回报 PID。
+4. 移除仓库根目录误提交的截图文件 `image.png`，发布清单同步加入安装程序相关文件。
+
+验证：离线回归 129 项全部通过；`scripts/check_release.py`、`scripts/verify_side_button.py`、`scripts/verify_tray.py`（9 项断言）通过。安装程序内置 EXE 的 SHA-256 为 `dc7aa300acd87383149b815f543b7d6a402cf6b43ccff1337a4ba3f9c8e387dc`，与本机已安装并实测可用的候选二进制一致。
+
+未完成：睡眠唤醒、多显示器、225% 以外缩放比例、长期常驻仍未终验；实体语音出字与免按路径未重跑完整回归；安装程序不写登录启动项、不提供卸载。仍为 prerelease。详见 [rc.6 说明](docs/releases/v0.2.0-rc.6.md)。
+
 ## 0.2.0-rc.5 · 2026-11-10
 
 把 rc.4 之后两笔未发布的本机修复与本日的版本目录选择修复合并为一版可发布的预发布版；下面两条 local 记录保留为历史，内容已被本版覆盖。

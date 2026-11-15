@@ -2,11 +2,11 @@
 
 让 Logi Options+ 发出的鼠标快捷键触发豆包输入法语音。程序常驻 Windows 右下角通知区域，关闭设置窗口后继续运行；换键只改豆包和 Logi Options+ 的原有设置。
 
-这是非官方 Windows 工具。当前发布 **v0.2.0-rc.5 源码预览版**，包含托盘管理、后侧键只读检查、Win/Alt 菜单抢焦点路径修复、启动状态限时确认与故障防漏键保护，以及深蓝色“鼠标＋声波”图标。
+这是非官方 Windows 工具。当前发布**v0.2.0-rc.6 预发布版**：在 rc.5 基础上修复合并后豆包升级到 v1.1.1.5（schemaVersion 19）导致重启即失效的问题，并首次附带一键安装程序。
 
-**下载：[v0.2.0-rc.5 Release](https://github.com/lumiai101/doubao-mouse-bridge/releases/tag/v0.2.0-rc.5)**。选择 `doubao-mouse-bridge-v0.2.0-rc.5-source.zip`，安装与运行见下文。下载包需要安装依赖（uv / Python），不包含 EXE、Python 运行环境或安装器。
+**下载：[v0.2.0-rc.6 Release](https://github.com/lumiai101/doubao-mouse-bridge/releases/tag/v0.2.0-rc.6)**。Release 里有两个包：`DoubaoMouseBridge-v0.2.0-rc.6-installer.zip`（推荐，含 EXE 与一键安装脚本，不需要另装 Python）和 `doubao-mouse-bridge-v0.2.0-rc.6-source.zip`（源码，需要 uv / Python 3.13）。安装与运行见下文。
 
-> 本版通过本地 122 项回归和隔离桌面检查，并已在实体罗技鼠标上验证语音出字、在本机 4K 225% 缩放下验证界面清晰；睡眠唤醒、多显示器与其他缩放比例、长期常驻仍未完成完整终验，未验证不等于已通过，稳定版仍不放行。完整边界见 [验证记录](docs/tray-verification.md)；rc.5 版本说明见 [版本说明](docs/releases/v0.2.0-rc.5.md)；rc.4 历史版本见 [rc.4 版本说明](docs/releases/v0.2.0-rc.4.md)。
+> 本版通过本地 129 项回归、发布门禁与隔离桌面检查；安装程序内置的 EXE 与本机已安装并实测可用的候选二进制一致（SHA-256 `dc7aa300…87dc`）。睡眠唤醒、多显示器与其他缩放比例、长期常驻仍未完成完整终验，未验证不等于已通过，稳定版仍不放行。完整边界见 [验证记录](docs/tray-verification.md)；rc.6 版本说明见 [版本说明](docs/releases/v0.2.0-rc.6.md)；rc.5 历史版本见 [rc.5 版本说明](docs/releases/v0.2.0-rc.5.md)。
 
 ## 能做什么
 
@@ -22,7 +22,7 @@
 
 ## 安装并开始使用
 
-需要 Windows x64、可正常识别文字的豆包输入法、Logi Options+，以及 [uv](https://docs.astral.sh/uv/getting-started/installation/)。当前接口白名单包含豆包 **v0.9.2.7**、**v0.9.3.19**、**v1.0.0.23**，配置格式兼容 schemaVersion **12** 与 **16**。每次创建语音子进程时都会检查 `rpc.dll` 的 SHA-256，即文件内容的校验值；不匹配时拒绝调用并保持“断开”，不会静默降级。不要只替换校验值绕过保护。
+需要 Windows x64、可正常识别文字的豆包输入法、Logi Options+，以及 [uv](https://docs.astral.sh/uv/getting-started/installation/)。当前接口白名单包含豆包 **v0.9.2.7**、**v0.9.3.19**、**v1.0.0.23**、**v1.1.1.3**、**v1.1.1.5**，配置格式兼容 schemaVersion **12**、**16** 与 **19**。每次创建语音子进程时都会检查 `rpc.dll` 的 SHA-256，即文件内容的校验值；不匹配时拒绝调用并保持“断开”，不会静默降级。不要只替换校验值绕过保护。
 
 1. 从上面的 Release 下载源码 ZIP，解压到固定目录。
 2. 双击 `setup.cmd`。脚本在本目录创建 `.venv`，安装固定版本依赖；缺少 Python 3.13 时，uv 按自身设置获取解释器。此步骤需要联网。

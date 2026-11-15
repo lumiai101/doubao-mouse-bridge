@@ -6,8 +6,8 @@
 |---|---|
 | 操作系统 | Windows 10 Home x64，10.0.19045 |
 | Python | CPython 3.13.12 x64 |
-| 豆包输入法 | v0.9.2.7、v0.9.3.19（schemaVersion 12）；v1.0.0.23（schemaVersion 16，本机只读配置与接口探测） |
-| 本地接口 | `rpc.dll` SHA-256 白名单：<br>- v0.9.2.7: `bc3d6fb5dbfa36161c9a6afddb3bde0c4937ee3a3a08bec1ddde71801710b11e`<br>- v0.9.3.19: `b1a609d662d807537f366b5c8d33ab20eba2701c0e207f67a0f664ea9a2c42d5`<br>- v1.0.0.23: `6b774ed5cabc3cb6050bcf51b6d343cd2ad5645d0d3e2abc012d3fc5b6f66575` |
+| 豆包输入法 | v0.9.2.7、v0.9.3.19（schemaVersion 12）；v1.0.0.23（schemaVersion 16）、v1.1.1.3 与 v1.1.1.5（schemaVersion 19，本机只读配置与接口探测） |
+| 本地接口 | `rpc.dll` SHA-256 白名单：<br>- v0.9.2.7: `bc3d6fb5dbfa36161c9a6afddb3bde0c4937ee3a3a08bec1ddde71801710b11e`<br>- v0.9.3.19: `b1a609d662d807537f366b5c8d33ab20eba2701c0e207f67a0f664ea9a2c42d5`<br>- v1.0.0.23: `6b774ed5cabc3cb6050bcf51b6d343cd2ad5645d0d3e2abc012d3fc5b6f66575`<br>- v1.1.0.23: `991251d014c1d28b28b7d2a2153f7f1a0c2b7d7d3039a3382a7e202b81f4dc3c`<br>- v1.1.1.3: `bd2de0ed51fb7590636e52a5da2a55741aed95561523f8286ff3a789c41e4a46`<br>- v1.1.1.5: `dd5fdf941e8aad8c09eddb09f5a3651be83aa1582c9e34bc13c845a77041797f` |
 | 依赖 | pynput 1.8.2、six 1.17.0、pystray 0.19.5、Pillow 11.3.0 |
 | 鼠标软件 | Logi Options+，具体版本未在公开验收摘要中记录 |
 | 实体设备 | 罗技 LIFT；不据此承诺所有罗技型号或本版完整实体回归 |
@@ -19,7 +19,8 @@
 - 已发布 v0.2.0-rc.4 源码（历史登记）：`5518b1b21190c4b6ab0ca4f4dc37ee37dbc62cd70ce0bce6d89f5d4162ab7a2c`，对应 96 项回归、34 项公开文件，记录见 rc.4 版本说明与变更记录。
 - 本机双态连接、高 DPI 与切换键修复版（2026-11-09，未发布，在 rc.4 之上做的本地修补）：`e9ff68b7cfb0ef002b560ec3a622541413c3ee19493dbcc9de8ef9228e4243c0`，对应 117 项回归、36 项公开文件。
 
-- 本版 v0.2.0-rc.5 源码（2026-11-10 预发布）：`c245101d5c0408e330825c6d33936564f002397bc31ebdd3eee4d7c721b94ba6`，对应 122 项回归、38 项公开文件。
+- 本版 v0.2.0-rc.6 源码（2026-11-15 预发布）：`e9b407f1f8e653ea61a554474c62696281bd5cbeef5cd7859e173482eb71ba93`，对应 129 项回归与 44 项公开文件。
+- 上一版 v0.2.0-rc.5 源码（2026-11-10 预发布）：`c245101d5c0408e330825c6d33936564f002397bc31ebdd3eee4d7c721b94ba6`，对应 122 项回归、38 项公开文件。
 
 可用 `scripts/check_release.py` 核对当前工作树指纹。该指纹仅证明源码一致，不代表本版完成实体终验。
 
