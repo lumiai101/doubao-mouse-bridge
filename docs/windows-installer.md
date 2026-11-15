@@ -18,6 +18,14 @@
 
 Windows x64、Python 3.13，先安装 `requirements.txt` 和 `requirements-build.txt`。Inno Setup 7.1.0 编译器须来自官方发行且签名有效。准备包含 Python、Tcl/Tk、Pillow、six、pynput、pystray 许可的目录；LGPL 组件同时提供对应版本源码及替换说明。构建不会执行所收集的依赖源码。
 
+许可目录可用仓库脚本生成，生成后再按实际运行时补齐 Tcl/Tk 许可：
+
+```powershell
+.venv\Scripts\python.exe -B -I scripts\collect_licenses.py . 许可证与源码目录
+```
+
+脚本会按 PyPI 记录的 SHA-256 校验 pynput 与 pystray 的源码包；构建用 Python 未随附 Tcl/Tk 许可时它会在标准错误里给出缺项，此时必须先补齐缺项再出包，不得跳过。
+
 ```powershell
 .venv\Scripts\python.exe -X utf8 -B -I scripts\build_windows.py --output "新的输出目录" --iscc "ISCC.exe的完整路径" --licenses "许可证与源码目录"
 ```

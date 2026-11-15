@@ -28,7 +28,7 @@ FILES = (
     'requirements-build.txt',
     'docs/releases/v0.2.0-rc.7.md', 'docs/windows-installer.md',
     'packaging/windows-installer.iss', 'scripts/build_windows.py',
-    'tests/test_installer_contract.py',
+    'tests/test_installer_contract.py', 'scripts/collect_licenses.py',
 )
 # 仅对 src/doubao_mouse_bridge.py 按 LF 计算指纹，不覆盖 FILES 全集，也不代表实体验收。
 SOURCE_SHA256 = 'e9b407f1f8e653ea61a554474c62696281bd5cbeef5cd7859e173482eb71ba93'
