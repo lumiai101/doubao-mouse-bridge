@@ -139,5 +139,63 @@ class ConnectionRecoveryTests(unittest.TestCase):
         connection.close.assert_called_once()
 
 
+    def test_none_connection_with_lingering_process_handles_stop_safely(self):
+        session = m.VoiceSession('unused')
+        process = session.process = MagicMock()
+        process.is_alive.return_value = False
+        session.connection = None
+        self.assertFalse(session.command('stop'))
+        self.assertIsNone(session.process)
+        self.assertIsNone(session.connection)
+
+    def test_release_clears_session_state_even_on_terminate_failure(self):
+        session = m.VoiceSession('unused')
+        process = session.process = MagicMock()
+        process.is_alive.return_value = True
+        session.connection = MagicMock()
+        with self.assertRaisesRegex(RuntimeError, '未退出'):
+            session._release(timeout=0)
+        self.assertIsNone(session.process)
+        self.assertIsNone(session.connection)
+
+    def test_close_handles_none_connection_without_raising(self):
+        session = m.VoiceSession('unused')
+        session.process = MagicMock()
+        session.process.is_alive.return_value = True
+        session.connection = None
+        session.close()
+        self.assertIsNone(session.process)
+        self.assertIsNone(session.connection)
+
+    def test_v1_1_1_5_and_recent_rpc_hashes_allowed(self):
+        self.assertIn('dd5fdf941e8aad8c09eddb09f5a3651be83aa1582c9e34bc13c845a77041797f', m.ALLOWED_RPC_SHA256)
+        self.assertIn('bd2de0ed51fb7590636e52a5da2a55741aed95561523f8286ff3a789c41e4a46', m.ALLOWED_RPC_SHA256)
+        self.assertIn('991251d014c1d28b28b7d2a2153f7f1a0c2b7d7d3039a3382a7e202b81f4dc3c', m.ALLOWED_RPC_SHA256)
+
+    def test_broken_session_recovery_lifecycle(self):
+        """破损会话（无连接、进程残留）在一键恢复中能安全释放并无缝重建成可探测会话"""
+        broken = m.VoiceSession('unused')
+        broken.process = MagicMock()
+        broken.process.is_alive.return_value = True
+        broken.connection = None
+        broken.close()
+        self.assertIsNone(broken.process)
+        self.assertIsNone(broken.connection)
+
+        fresh = m.VoiceSession('unused')
+        fresh_conn = MagicMock()
+        fresh_conn.poll.return_value = True
+        fresh_conn.recv.return_value = (True, True, 0)
+        child = MagicMock()
+        proc = MagicMock()
+        proc.is_alive.return_value = False
+        ctx = MagicMock()
+        ctx.Pipe.return_value = fresh_conn, child
+        ctx.Process.return_value = proc
+        with patch('multiprocessing.get_context', return_value=ctx):
+            self.assertEqual(fresh.probe(), 0)
+        self.assertFalse(fresh.uncertain)
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)
