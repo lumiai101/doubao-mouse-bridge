@@ -65,6 +65,9 @@ ALLOWED_RPC_SHA256 = frozenset({
     'bc3d6fb5dbfa36161c9a6afddb3bde0c4937ee3a3a08bec1ddde71801710b11e',  # v0.9.2.7
     'b1a609d662d807537f366b5c8d33ab20eba2701c0e207f67a0f664ea9a2c42d5',  # v0.9.3.19
     '6b774ed5cabc3cb6050bcf51b6d343cd2ad5645d0d3e2abc012d3fc5b6f66575',  # v1.0.0.23，本机只读探测1006=0且导出契约与v1.0.0.20一致
+    '991251d014c1d28b28b7d2a2153f7f1a0c2b7d7d3039a3382a7e202b81f4dc3c',  # v1.1.0.23，导出只增不减（48→65），本程序所用6个函数仍在；本机只读探测1006=0
+    'bd2de0ed51fb7590636e52a5da2a55741aed95561523f8286ff3a789c41e4a46',  # v1.1.1.3，导出与v1.1.0.23完全一致（65/65，0删0增），本程序所用6个函数仍在；本机只读探测1006=0
+    'dd5fdf941e8aad8c09eddb09f5a3651be83aa1582c9e34bc13c845a77041797f',  # v1.1.1.5，导出只增不减（65→74，0删9增），本程序所用6个函数全在；本机只读探测1006=0
 })
 
 
@@ -130,10 +133,14 @@ class Bindings:
         return f'长按 {self.hold.label() if self.hold else "禁用"}；免按 {self.toggle.label() if self.toggle else "禁用"}'
 
 
+VERIFIED_SCHEMA_VERSIONS = (12, 16, 19)
+
+
 def read_bindings(path):
     config = json.loads(Path(path).read_text(encoding='utf-8-sig'))
-    if config.get('schemaVersion') not in (12, 16):
-        raise ValueError('未验证的豆包配置版本')
+    version = config.get('schemaVersion')
+    if version not in VERIFIED_SCHEMA_VERSIONS:
+        raise ValueError(f'未验证的豆包配置版本 {version}（已验证 {"/".join(map(str, VERIFIED_SCHEMA_VERSIONS))}）')
     voice = config['voice']
     if voice.get('enableVoiceShortcut') is False or voice.get('enableGlobalVoiceShortcut') is False:
         return Bindings(None, None)
@@ -488,8 +495,9 @@ class DoubaoProfile:
 class NativeVoice:
     def __init__(self, install):
         self.directory = Path(install)
-        if hashlib.sha256((self.directory / 'rpc.dll').read_bytes()).hexdigest() not in ALLOWED_RPC_SHA256:
-            raise RuntimeError('豆包原生接口版本已变化，未启用')
+        digest = hashlib.sha256((self.directory / 'rpc.dll').read_bytes()).hexdigest()
+        if digest not in ALLOWED_RPC_SHA256:
+            raise RuntimeError(f'豆包原生接口版本已变化，未启用（rpc.dll {digest[:12]}，{self.directory.name}）')
         self.search = os.add_dll_directory(str(self.directory))
         self.dll = ctypes.CDLL(str(self.directory / 'rpc.dll'))
         self.pipe = rb'\\.\pipe\ObricIme\oime-server'
@@ -697,7 +705,7 @@ class VoiceSession:
         with self.lock:
             try:
                 return self._command(action)
-            except (EOFError, OSError, ValueError, TypeError) as exc:
+            except (EOFError, OSError, ValueError, TypeError, AttributeError) as exc:
                 self.uncertain = True
                 try:
                     self._release()
@@ -718,24 +726,38 @@ class VoiceSession:
 
     def _release(self, timeout=2):
         process, connection = self.process, self.connection
+        self.process = None
+        self.connection = None
         try:
             if process is not None:
                 process.join(timeout)
-                if process.is_alive():
+                alive = process.is_alive()
+                if alive:
                     self.uncertain = True
                     process.terminate()
                     process.join(2)
-                    if process.is_alive():
+                    alive = process.is_alive()
+                    if alive and hasattr(process, 'kill'):
+                        try:
+                            process.kill()
+                            process.join(1)
+                            alive = process.is_alive()
+                        except Exception:
+                            pass
+                    if alive:
                         raise RuntimeError('本程序语音子进程未退出，请检查豆包麦克风')
-                self.process = None
         finally:
             if connection is not None:
-                connection.close()
-            self.connection = None
+                try:
+                    connection.close()
+                except Exception:
+                    pass
 
     def _command(self, action):
         import multiprocessing
-        if self.process is None:
+        if self.process is None or self.connection is None:
+            if self.process is not None or self.connection is not None:
+                self._release(0)
             if action not in ('start', 'start-fallback', 'probe'):
                 return False
             context = multiprocessing.get_context('spawn')
@@ -744,9 +766,7 @@ class VoiceSession:
             try:
                 self.process.start()
             except Exception:
-                self.process = None
-                self.connection.close()
-                self.connection = None
+                self._release(0)
                 raise
             finally:
                 child.close()
@@ -769,10 +789,16 @@ class VoiceSession:
     def close(self):
         with self.lock:
             try:
-                if self.process is not None and self.process.is_alive():
-                    self.command('cancel')
+                if self.process is not None and self.process.is_alive() and self.connection is not None:
+                    try:
+                        self.command('cancel')
+                    except Exception:
+                        pass
             finally:
-                self._release(0)
+                try:
+                    self._release(0)
+                except Exception:
+                    pass
 
 
 class ProcessEntry(ctypes.Structure):
@@ -1229,8 +1255,6 @@ def main():
                             try:
                                 native.close()
                             except Exception:
-                                if native.process is not None:
-                                    raise
                                 logging.exception('旧会话清理不完整，将只读确认豆包空闲状态')
                             if closing.is_set():
                                 continue

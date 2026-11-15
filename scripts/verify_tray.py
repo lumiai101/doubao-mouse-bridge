@@ -12,6 +12,13 @@ import time
 import types
 import uuid
 from unittest.mock import patch
+import os
+
+if sys.platform == 'win32':
+    _orig_mkdir = os.mkdir
+    def _safe_mkdir(path, mode=0o777, *args, **kwargs):
+        return _orig_mkdir(path, *args, **kwargs)
+    os.mkdir = _safe_mkdir
 
 
 def verify():

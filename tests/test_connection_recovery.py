@@ -139,5 +139,37 @@ class ConnectionRecoveryTests(unittest.TestCase):
         connection.close.assert_called_once()
 
 
+    def test_none_connection_with_lingering_process_handles_stop_safely(self):
+        session = m.VoiceSession('unused')
+        process = session.process = MagicMock()
+        process.is_alive.return_value = False
+        session.connection = None
+        self.assertFalse(session.command('stop'))
+        self.assertIsNone(session.process)
+        self.assertIsNone(session.connection)
+
+    def test_release_clears_session_state_even_on_terminate_failure(self):
+        session = m.VoiceSession('unused')
+        process = session.process = MagicMock()
+        process.is_alive.return_value = True
+        session.connection = MagicMock()
+        with self.assertRaisesRegex(RuntimeError, '未退出'):
+            session._release(timeout=0)
+        self.assertIsNone(session.process)
+        self.assertIsNone(session.connection)
+
+    def test_close_handles_none_connection_without_raising(self):
+        session = m.VoiceSession('unused')
+        session.process = MagicMock()
+        session.process.is_alive.return_value = True
+        session.connection = None
+        session.close()
+        self.assertIsNone(session.process)
+        self.assertIsNone(session.connection)
+
+    def test_v1_1_1_5_and_recent_rpc_hashes_allowed(self):
+        self.assertIn('dd5fdf941e8aad8c09eddb09f5a3651be83aa1582c9e34bc13c845a77041797f', m.ALLOWED_RPC_SHA256)
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)
