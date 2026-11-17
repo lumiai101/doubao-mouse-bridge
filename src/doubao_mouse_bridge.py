@@ -880,7 +880,7 @@ def open_settings(kind):
         os.startfile(path)
 
 
-def create_tray_icon_image(state='ready'):
+def create_tray_icon_image(state='ready', size=64):
     from PIL import Image, ImageDraw
     # 先按四倍尺寸绘制，再缩小，让托盘里的轮廓和声波保持平滑。
     img = Image.new('RGBA', (256, 256), (0, 0, 0, 0))
@@ -906,7 +906,32 @@ def create_tray_icon_image(state='ready'):
             d.ellipse((190, 194, 214, 218), fill=ink)
         else:
             d.ellipse((184, 188, 220, 224), outline=white, width=8)
-    return img.resize((64, 64), Image.Resampling.LANCZOS)
+    return img.resize((size, size), Image.Resampling.LANCZOS)
+
+
+APP_ICON_SIZES = (16, 24, 32, 48, 64, 128, 256)
+
+
+def create_app_icon_image():
+    """标题栏、任务栏与 EXE 图标复用托盘图标的图形本身，不另立第二套标识。"""
+    return create_tray_icon_image('ready', 256)
+
+
+def write_app_icon(target, sizes=APP_ICON_SIZES):
+    """写出打包嵌进 EXE 的多尺寸 .ico，像素与应用图标完全一致。"""
+    create_app_icon_image().save(target, format='ICO', sizes=[(size, size) for size in sizes])
+
+
+def apply_window_icon(window):
+    """把应用图标交给窗口，标题栏与任务栏按钮都取自它。
+
+    引用挂在窗口上：PhotoImage 一旦被回收，系统会退回 Tk 的默认羽毛图标。
+    """
+    from PIL import ImageTk
+    icon = ImageTk.PhotoImage(create_app_icon_image(), master=window)
+    window.iconphoto(True, icon)
+    window.app_icon = icon
+    return icon
 
 
 def build_tray_menu(action_handler, get_status_label, get_pause_label):
@@ -1053,6 +1078,10 @@ def main():
     scale = enable_dpi_awareness()
     ui = tk.Tk()
     ui.title('豆包鼠标语音适配')
+    try:
+        apply_window_icon(ui)
+    except Exception:
+        logging.exception('窗口图标设置失败，界面沿用系统默认图标')
     ui.tk.call('tk', 'scaling', scale * 96 / 72)
     ui.geometry(f'{round(700 * scale)}x{round(570 * scale)}')
     ui.minsize(round(640 * scale), round(530 * scale))

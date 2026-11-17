@@ -38,7 +38,7 @@ InputState 处理长按、免按、重复及松开
 | `NativeVoice` | 子进程内的 DLL、命名管道、会话标记及启停 |
 | `VoiceSession`、`native_session` | 串行父子进程通信、错误/EOF 清理、只读探测和原生资源释放 |
 | `read_logi_buttons`、`side_button_status` | 只读解析后侧键绑定，比较豆包设置，不证明在线设备身份 |
-| `create_tray_icon_image`、`build_tray_menu` | 绘制鼠标声波及状态角标，将托盘动作交回主线程 |
+| `create_tray_icon_image`、`create_app_icon_image`、`apply_window_icon`、`build_tray_menu` | 绘制鼠标声波及状态角标；托盘、窗口标题栏、任务栏与 EXE 图标共用同一张图 |
 | `main` | 单实例、显示与退出事件、pynput、tkinter、队列和设置重载 |
 
 通用键盘监听复用 pynput，系统托盘使用 pystray，图标使用 Pillow。解析、线程、队列和只读数据库使用 Python 标准库。没有另写驱动、录音引擎或识别服务。
