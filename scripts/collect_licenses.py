@@ -1,7 +1,9 @@
-"""为受控本地安装收集许可证及 LGPL 依赖的确切源包；不执行下载内容。
+"""为受控本地安装收集许可证与 LGPL 依赖的确切源包；不执行下载内容。
 
-缺项一律硬失败：构建用 Python 没带 Tcl/Tk 许可、或依赖在 PyPI 上取不到任何
-可校验的分发件时，脚本以非零退出，避免静默产出缺许可的安装包。
+Tcl 正文缺失一律硬失败：仓库内的 packaging/licenses/Tcl-8.6.txt 与构建用
+Python 给的副本都没有 Tcl 正文时，脚本以非零退出，避免静默产出缺许可的安装包。
+Tk 正文只作补充记录，缺失时告警并写进 tcl-tk/NOTICE.txt，不阻断出包；依赖在
+PyPI 上取不到任何可校验的分发件时同样非零退出。
 """
 import hashlib
 import importlib.metadata
@@ -43,27 +45,35 @@ def fetch_source(name, version):
     return item, kind, data
 
 
+VENDORED_TCL_TERMS = LICENSE_SOURCE / 'Tcl-8.6.txt'
+
 TCL_TERM_COMPONENTS = (
     ('tcl', 'tcl/tcl8.6/license.terms'),
     ('tk', 'tcl/tk8.6/license.terms'),
 )
 
 
-def require_tcl_terms(base):
-    """返回构建用 Python 随附的 Tcl/Tk 许可正文，按组件区分。
+def require_tcl_terms(base, vendored=None):
+    """返回可用的 Tcl/Tk 许可正文，按组件区分。
 
     Tcl 与 Tk 不是同一份正文（归属声明与 DFAR 条款不同），所以逐份保留，
-    不让其中一份顶替另一份。一份都没有时硬失败；只缺一份时由调用方告警，
-    并在 NOTICE 里写明实际带的是哪一份。
+    不让其中一份顶替另一份。仓库内的 Tcl 正文优先：构建用 Python 普遍不随附
+    Tcl 那一份，而 Tcl 8.6 库代码会随包分发，正文必须随分发逐字给出。
+    仓库副本与解释器都没有该组件时，才由调用方告警并在 NOTICE 里点名。
     """
     base = Path(base)
+    vendored = VENDORED_TCL_TERMS if vendored is None else vendored
     found = {}
     for component, relative in TCL_TERM_COMPONENTS:
         path = base / relative
         if path.is_file():
             found[component] = path
-    if not found:
-        raise SystemExit('构建用 Python 未随附 Tcl/Tk 许可，必须先补齐再出包')
+    if vendored is not False and Path(vendored).is_file():
+        found['tcl'] = Path(vendored)
+    if 'tcl' not in found:
+        raise SystemExit(
+            'Tcl 许可正文缺失：packaging/licenses/Tcl-8.6.txt 与构建用 Python '
+            '都没有，必须先补齐再出包')
     return found
 
 
@@ -92,6 +102,14 @@ def check_source_digest(data, item):
     return digest
 
 
+def require_license_text(name):
+    """取仓库内的许可正文；缺失即硬失败，不允许悄悄少发一份。"""
+    path = LICENSE_SOURCE / name
+    if not path.is_file():
+        raise SystemExit(f'缺少许可正文: {path}')
+    return path
+
+
 def collect(repo, target):
     repo, target = Path(repo), Path(target)
     target.mkdir(parents=True, exist_ok=False)
@@ -117,15 +135,11 @@ def collect(repo, target):
                             'source_kind': kind}, indent=2), encoding='utf-8')
     # pynput 的发行版只带 COPYING.LGPL，pystray 的 wheel 自带 COPYING（GPLv3）；
     # 两处统一用仓库内的 GPLv3 正文覆盖，保证分发出的副本一致。
-    gpl = LICENSE_SOURCE / 'GPL-3.0.txt'
-    if not gpl.is_file():
-        raise SystemExit(f'缺少 GPLv3 正文: {gpl}')
+    gpl = require_license_text('GPL-3.0.txt')
     for name in ('pynput', 'pystray'):
         shutil.copy2(gpl, target / f'{name}-{versions[name]}' / 'COPYING')
     # OpenSSL 3.x 随 _internal/ 分发，Apache-2.0 正文必须随包。
-    apache = LICENSE_SOURCE / 'Apache-2.0.txt'
-    if not apache.is_file():
-        raise SystemExit(f'缺少 Apache-2.0 正文: {apache}')
+    apache = require_license_text('Apache-2.0.txt')
     openssl = target / 'openssl'
     openssl.mkdir()
     shutil.copy2(apache, openssl / 'LICENSE.txt')
@@ -144,12 +158,13 @@ def collect(repo, target):
     missing_label = '、'.join(absolute)
     present_label = '、'.join(written)
     if absolute:
-        print('警告: 构建用 Python 未随附以下 Tcl/Tk 许可正文，安装包内只带实际存在的那份: '
+        print('警告: 以下 Tcl/Tk 许可正文既不在仓库也不在构建用 Python 里，'
+              '安装包内只带实际存在的那份: '
               + ', '.join(absolute), file=sys.stderr)
-        notice = (f'Tcl/Tk 8.6：构建用 CPython 发行版随附 {present_label}；'
-                  f'{missing_label} 未随附，安装包内没有该组件正文。\n')
+        notice = (f'Tcl/Tk 8.6：安装包内随附 {present_label}；'
+                  f'{missing_label} 缺失，该组件正文未随包。\n')
     else:
-        notice = (f'Tcl/Tk 8.6：构建用 CPython 发行版随附 Tcl 与 Tk 各一份许可正文，'
+        notice = (f'Tcl/Tk 8.6：安装包内随附 Tcl 与 Tk 各一份许可正文，'
                   f'分别为 {present_label}。\n')
     (tcl_dir / 'NOTICE.txt').write_text(notice, encoding='utf-8')
     for name in ('LICENSE', 'THIRD_PARTY_NOTICES.md'):

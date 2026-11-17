@@ -9,7 +9,7 @@
 | pystray | Windows系统托盘常驻与右键菜单 | 0.19.5 | LGPLv3，[PyPI](https://pypi.org/project/pystray/0.19.5/)、[源码](https://github.com/moses-palmer/pystray) |
 | pillow | 托盘状态图标图形生成 | 11.3.0 | MIT-CMU，[PyPI](https://pypi.org/project/pillow/11.3.0/)、[官网](https://python-pillow.github.io) |
 | CPython | 运行时，标准库ctypes与tkinter | 实体验收3.13.12 | PSF License等，[许可证说明](https://docs.python.org/3/license.html) |
-| Tcl/Tk | CPython 自带 tkinter 依赖 | 8.6 | BSD 风格，正文随安装包 `licenses/tcl-tk/tcl-license.terms` 与 `licenses/tcl-tk/tk-license.terms`（构建用 CPython 随附哪份就带哪份） |
+| Tcl/Tk | CPython 自带 tkinter 依赖 | 8.6 | BSD 风格，正文随安装包；Tcl 正文固定为 `licenses/tcl-tk/tcl-license.terms`（仓库内 `packaging/licenses/Tcl-8.6.txt`），Tk 正文随构建用 CPython 提供与否，实际随包的文件见 `licenses/tcl-tk/NOTICE.txt` |
 | PyInstaller | 构建期打包工具，不随安装器分发 | 6.22.3 | GPL-2.0 及打包例外条款，[项目](https://github.com/pyinstaller/pyinstaller) |
 | OpenSSL | 随 `_internal/` 分发的 `libcrypto-3-x64.dll`、`libssl-3-x64.dll` | 3.x | Apache-2.0，正文随安装器 `licenses/openssl/LICENSE.txt`，[项目](https://github.com/openssl/openssl) |
 | SQLite | 随 `_internal/` 分发的 `sqlite3.dll` | 3.x | Public Domain，[说明](https://www.sqlite.org/copyright.html) |
