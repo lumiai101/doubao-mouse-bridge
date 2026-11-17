@@ -7,7 +7,7 @@ import shutil
 import sys
 import urllib.request
 
-UA = {'User-Agent': 'DoubaoMouseBridge-build/0.2'}
+UA = {'User-Agent': 'DoubaoMouseBridge-build'}
 
 
 def collect(repo, target):

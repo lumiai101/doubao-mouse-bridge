@@ -1,5 +1,7 @@
+; 版本号只有命令行一个来源，不在本文件里留兜底值，避免不带 /DAppVersion 的编译
+; 产出落在 0.2.0-rc.x 版本线之外的安装器。
 #ifndef AppVersion
-  #define AppVersion "0.3.0-rc.1"
+  #error AppVersion is required, pass it with /DAppVersion
 #endif
 #ifndef AppSourceDir
   #error AppSourceDir is required

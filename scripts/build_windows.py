@@ -13,6 +13,8 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def build(output, compiler=None, licenses=None, version='0.2.0-rc.7'):
     output = Path(output).resolve()
+    if compiler and not licenses:
+        raise ValueError('编译安装器前必须提供包含第三方许可与 LGPL 源包的 --licenses 目录')
     if output.exists():
         raise FileExistsError(f'输出目录已存在，拒绝覆盖: {output}')
     output.mkdir(parents=True)
@@ -36,8 +38,6 @@ def build(output, compiler=None, licenses=None, version='0.2.0-rc.7'):
     application = output / 'app/DoubaoMouseBridge'
     if licenses:
         shutil.copytree(licenses, application / 'licenses')
-    if compiler and not licenses:
-        raise ValueError('编译安装器前必须提供包含第三方许可与 LGPL 源包的 --licenses 目录')
     hashes = {p.relative_to(application).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest()
               for p in sorted(application.rglob('*')) if p.is_file()}
     (output / 'application-sha256.json').write_text(json.dumps(hashes, indent=2), encoding='utf-8')
