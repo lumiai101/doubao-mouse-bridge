@@ -255,6 +255,30 @@ class WindowIconTests(unittest.TestCase):
             self.assertIn(size, sizes)
         self.assertEqual(list(m.create_app_icon_image().convert('RGBA').getdata()), pixels)
 
+    def test_build_script_writes_ico_with_256(self):
+        """打包脚本的 .ico 必须含 256px；退回旧写法会让这个用例变红。"""
+        from PIL import Image
+
+        script = Path(__file__).resolve().parents[1] / 'scripts' / 'build_windows.py'
+        source = script.read_text(encoding='utf-8')
+        self.assertNotIn('create_tray_icon_image', source)
+        self.assertIn('bridge.write_app_icon', source)
+
+        spec = importlib.util.spec_from_file_location('build_windows', script)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        directory = Path(__file__).resolve().parents[1] / f'.ico-probe-{id(self)}'
+        directory.mkdir()
+        self.addCleanup(lambda: __import__('shutil').rmtree(directory, True))
+
+        icon = module.write_icon(directory, m)
+        with Image.open(icon) as image:
+            sizes = set(image.info['sizes'])
+
+        for size in m.APP_ICON_SIZES:
+            self.assertIn((size, size), sizes)
+
     def test_main_applies_icon_to_its_own_window(self):
         """真正跑一遍 m.main()，确认它给自建窗口设了图标，而不是只有辅助函数可用。"""
         import tkinter as tk
