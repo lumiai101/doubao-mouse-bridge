@@ -11,20 +11,65 @@ spec.loader.exec_module(collect_licenses)
 
 
 class CollectLicensesTests(unittest.TestCase):
-    def test_missing_tcl_terms_aborts_instead_of_warning(self):
+    def _probe(self, components):
         probe = ROOT / f'.tcl-probe-{id(self)}'
-        probe.mkdir()
-        self.addCleanup(lambda: probe.rmdir() if probe.exists() else None)
+        for component in components:
+            relative = dict(collect_licenses.TCL_TERM_COMPONENTS)[component]
+            path = probe / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(f'{component} terms', encoding='utf-8')
+        probe.mkdir(parents=True, exist_ok=True)
+        self.addCleanup(lambda: __import__('shutil').rmtree(probe, True))
+        return probe
+
+    def test_missing_tcl_terms_aborts_instead_of_warning(self):
+        probe = self._probe(())
         with self.assertRaises(SystemExit):
             collect_licenses.require_tcl_terms(probe)
 
-    def test_present_tcl_terms_are_returned(self):
-        probe = ROOT / f'.tcl-probe-{id(self)}'
-        (probe / 'tcl' / 'tk8.6').mkdir(parents=True)
-        (probe / 'tcl' / 'tk8.6' / 'license.terms').write_text('terms', encoding='utf-8')
-        self.addCleanup(lambda: __import__('shutil').rmtree(probe, True))
+    def test_both_tcl_and_tk_terms_are_returned(self):
+        probe = self._probe(('tcl', 'tk'))
         terms = collect_licenses.require_tcl_terms(probe)
-        self.assertEqual(len(terms), 1)
+        self.assertEqual(sorted(terms), ['tcl', 'tk'])
+
+    def test_only_one_term_present_is_reported_as_missing(self):
+        """只随附一份时不能静默：缺的那份必须能被报出来。"""
+        probe = self._probe(('tk',))
+        terms = collect_licenses.require_tcl_terms(probe)
+        self.assertEqual(sorted(terms), ['tk'])
+        missing = collect_licenses.missing_tcl_terms(terms)
+        self.assertEqual(missing, ['tcl/tcl8.6/license.terms'])
+
+    def test_both_terms_are_written_separately(self):
+        """Tcl 与 Tk 正文必须各落一份，不能让其中一份顶替另一份。"""
+        probe = self._probe(('tcl', 'tk'))
+        terms = collect_licenses.require_tcl_terms(probe)
+
+        target = ROOT / f'.tcl-out-{id(self)}'
+        target.mkdir()
+        self.addCleanup(lambda: __import__('shutil').rmtree(target, True))
+
+        written = collect_licenses.write_tcl_terms(terms, target)
+        self.assertEqual(written, ['tcl-license.terms', 'tk-license.terms'])
+        self.assertEqual((target / 'tcl-license.terms').read_text(encoding='utf-8'),
+                         'tcl terms')
+        self.assertEqual((target / 'tk-license.terms').read_text(encoding='utf-8'),
+                         'tk terms')
+
+    def test_source_digest_mismatch_is_an_error(self):
+        """摘掉 sha256 校验会让这个用例变红。"""
+        item = {'filename': 'pynput-1.8.2.tar.gz',
+                'digests': {'sha256': '0' * 64}}
+        with self.assertRaises(RuntimeError):
+            collect_licenses.check_source_digest(b'source bytes', item)
+
+    def test_source_digest_match_returns_digest(self):
+        import hashlib
+        data = b'source bytes'
+        item = {'filename': 'pynput-1.8.2.tar.gz',
+                'digests': {'sha256': hashlib.sha256(data).hexdigest()}}
+        self.assertEqual(collect_licenses.check_source_digest(data, item),
+                         hashlib.sha256(data).hexdigest())
 
     def test_pystray_has_no_sdist_so_wheel_is_the_source(self):
         urls = [

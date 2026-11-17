@@ -11,6 +11,13 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def write_icon(directory, bridge):
+    """写出打包用的 .ico；尺寸由 bridge.APP_ICON_SIZES 决定（含 256）。"""
+    icon = Path(directory) / 'bridge.ico'
+    bridge.write_app_icon(icon)
+    return icon
+
+
 def build(output, compiler=None, licenses=None, version='0.2.0-rc.7'):
     output = Path(output).resolve()
     if compiler and not licenses:
@@ -22,8 +29,7 @@ def build(output, compiler=None, licenses=None, version='0.2.0-rc.7'):
     bridge = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = bridge
     spec.loader.exec_module(bridge)
-    icon = output / 'bridge.ico'
-    bridge.write_app_icon(icon)
+    icon = write_icon(output, bridge)
     command = [sys.executable, '-X', 'utf8', '-B', '-I', '-m', 'PyInstaller',
                '--noconfirm', '--clean', '--onedir', '--noconsole',
                '--name', 'DoubaoMouseBridge', '--icon', str(icon),

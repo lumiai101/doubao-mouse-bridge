@@ -39,20 +39,57 @@ def fetch_source(name, version):
     request = urllib.request.Request(item['url'], headers=UA)
     with urllib.request.urlopen(request, timeout=60) as response:
         data = response.read()
-    digest = hashlib.sha256(data).hexdigest()
-    if digest != item['digests']['sha256']:
-        raise RuntimeError(f'源包校验失败: {name} {item["filename"]}')
+    check_source_digest(data, item)
     return item, kind, data
 
 
+TCL_TERM_COMPONENTS = (
+    ('tcl', 'tcl/tcl8.6/license.terms'),
+    ('tk', 'tcl/tk8.6/license.terms'),
+)
+
+
 def require_tcl_terms(base):
-    """返回可用的 Tcl/Tk 许可正文；一个都没有时硬失败，不静默放过。"""
+    """返回构建用 Python 随附的 Tcl/Tk 许可正文，按组件区分。
+
+    Tcl 与 Tk 不是同一份正文（归属声明与 DFAR 条款不同），所以逐份保留，
+    不让其中一份顶替另一份。一份都没有时硬失败；只缺一份时由调用方告警，
+    并在 NOTICE 里写明实际带的是哪一份。
+    """
     base = Path(base)
-    terms = [base / 'tcl/tcl8.6/license.terms', base / 'tcl/tk8.6/license.terms']
-    terms = [path for path in terms if path.is_file()]
-    if not terms:
+    found = {}
+    for component, relative in TCL_TERM_COMPONENTS:
+        path = base / relative
+        if path.is_file():
+            found[component] = path
+    if not found:
         raise SystemExit('构建用 Python 未随附 Tcl/Tk 许可，必须先补齐再出包')
-    return terms
+    return found
+
+
+def missing_tcl_terms(terms):
+    """列出随附缺失的组件，用于告警与 NOTICE 记录。"""
+    return [relative for component, relative in TCL_TERM_COMPONENTS
+            if component not in terms]
+
+
+def write_tcl_terms(terms, directory):
+    """按组件各写一份许可正文，返回写入的文件名列表。"""
+    directory = Path(directory)
+    written = []
+    for component, source in sorted(terms.items()):
+        name = f'{component}-license.terms'
+        shutil.copy2(source, directory / name)
+        written.append(name)
+    return written
+
+
+def check_source_digest(data, item):
+    """按 PyPI 记录的 sha256 校验源码包，不一致直接失败。"""
+    digest = hashlib.sha256(data).hexdigest()
+    if digest != item['digests']['sha256']:
+        raise RuntimeError(f'源包校验失败: {item["filename"]}')
+    return digest
 
 
 def collect(repo, target):
@@ -78,8 +115,8 @@ def collect(repo, target):
             (folder / 'source.json').write_text(
                 json.dumps({'url': item['url'], 'sha256': item['digests']['sha256'],
                             'source_kind': kind}, indent=2), encoding='utf-8')
-    # LGPLv3 是 GPLv3 之上的附加许可，分发时必须同时给出 GPLv3 正文。
-    # pynput 的发行版只带 COPYING.LGPL，基础文本由仓库内权威副本补齐。
+    # pynput 的发行版只带 COPYING.LGPL，pystray 的 wheel 自带 COPYING（GPLv3）；
+    # 两处统一用仓库内的 GPLv3 正文覆盖，保证分发出的副本一致。
     gpl = LICENSE_SOURCE / 'GPL-3.0.txt'
     if not gpl.is_file():
         raise SystemExit(f'缺少 GPLv3 正文: {gpl}')
@@ -100,16 +137,29 @@ def collect(repo, target):
     shutil.copy2(python_license, target / 'python' / 'LICENSE.txt')
     # Tcl/Tk 许可统一落在 tcl-tk/，不再重复写进 python/ 子目录。
     terms = require_tcl_terms(base)
+    absolute = missing_tcl_terms(terms)
     tcl_dir = target / 'tcl-tk'
     tcl_dir.mkdir()
-    shutil.copy2(terms[0], tcl_dir / 'license.terms')
-    (tcl_dir / 'NOTICE.txt').write_text(
-        'Tcl/Tk 8.6，取自构建用 CPython 发行版自带 license.terms。\n', encoding='utf-8')
+    written = write_tcl_terms(terms, tcl_dir)
+    missing_label = '、'.join(absolute)
+    present_label = '、'.join(written)
+    if absolute:
+        print('警告: 构建用 Python 未随附以下 Tcl/Tk 许可正文，安装包内只带实际存在的那份: '
+              + ', '.join(absolute), file=sys.stderr)
+        notice = (f'Tcl/Tk 8.6：构建用 CPython 发行版随附 {present_label}；'
+                  f'{missing_label} 未随附，安装包内没有该组件正文。\n')
+    else:
+        notice = (f'Tcl/Tk 8.6：构建用 CPython 发行版随附 Tcl 与 Tk 各一份许可正文，'
+                  f'分别为 {present_label}。\n')
+    (tcl_dir / 'NOTICE.txt').write_text(notice, encoding='utf-8')
     for name in ('LICENSE', 'THIRD_PARTY_NOTICES.md'):
         shutil.copy2(repo / name, target / name)
     print(json.dumps({'license_directory': str(target),
                       'python_license': str(python_license),
-                      'tcl_tk_source': str(terms[0])}, ensure_ascii=False))
+                      'tcl_tk_sources': {key: str(value)
+                                         for key, value in sorted(terms.items())},
+                      'tcl_tk_files': written,
+                      'tcl_tk_missing': absolute}, ensure_ascii=False))
 
 
 if __name__ == '__main__':

@@ -24,7 +24,9 @@ Windows x64、Python 3.13，先安装 `requirements.txt` 和 `requirements-build
 .venv\Scripts\python.exe -B -I scripts\collect_licenses.py . 许可证与源码目录
 ```
 
-脚本会按 PyPI 记录的 SHA-256 校验 pynput 与 pystray 的源码包，并把 `packaging/licenses/` 里的 GPLv3 与 Apache-2.0 正文分别补进 `pynput-*/COPYING`、`pystray-*/COPYING` 与 `openssl/LICENSE.txt`。缺项一律硬失败、非零退出：构建用 Python 未随附 Tcl/Tk 许可、缺少 GPLv3/Apache-2.0 正文、或依赖在 PyPI 上取不到任何可校验的分发件，都会直接中止，不再打印警告后继续出包。
+脚本会按 PyPI 记录的 SHA-256 校验 pynput 与 pystray 的源码包，并把 `packaging/licenses/` 里的 GPLv3 与 Apache-2.0 正文分别补进 `pynput-*/COPYING`、`pystray-*/COPYING` 与 `openssl/LICENSE.txt`。构建用 Python 一份 Tcl/Tk 许可正文都没有、缺少 GPLv3/Apache-2.0 正文、或依赖在 PyPI 上取不到任何可校验的分发件时，一律硬失败、非零退出，不会打警告后继续出包。
+
+Tcl 与 Tk 的许可正文并不相同，脚本按组件分别落为 `tcl-tk/tcl-license.terms` 与 `tcl-tk/tk-license.terms`。构建用 CPython 只随附其中一份时会向 stderr 打一条警告，并把实际带的是哪一份写进 `tcl-tk/NOTICE.txt` 与脚本的 JSON 输出，不静默略过。
 
 pystray 0.19.5 在 PyPI 上只有 wheel、没有 sdist。该包是纯 Python，wheel 内的 `.py` 就是随包分发的源码本体，因此脚本退回 wheel 作为对应源码，并校验 PyPI 记录的 sha256；不使用 GitHub 生成的 tag 归档，因为它的字节哈希不稳定。
 
