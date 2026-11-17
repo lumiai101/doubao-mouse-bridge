@@ -22,6 +22,7 @@ screenshots/
 # 分发及编辑器临时文件
 tmp*
 doubao-tray-probe-*
+doubao-release-*
 testdir*
 build/
 dist/
