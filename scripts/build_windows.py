@@ -23,7 +23,7 @@ def build(output, compiler=None, licenses=None, version='0.2.0-rc.7'):
     sys.modules[spec.name] = bridge
     spec.loader.exec_module(bridge)
     icon = output / 'bridge.ico'
-    bridge.create_tray_icon_image('ready').save(icon, sizes=[(16, 16), (32, 32), (48, 48), (64, 64)])
+    bridge.write_app_icon(icon)
     command = [sys.executable, '-X', 'utf8', '-B', '-I', '-m', 'PyInstaller',
                '--noconfirm', '--clean', '--onedir', '--noconsole',
                '--name', 'DoubaoMouseBridge', '--icon', str(icon),
