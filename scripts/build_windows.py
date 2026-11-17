@@ -18,7 +18,7 @@ def write_icon(directory, bridge):
     return icon
 
 
-def build(output, compiler=None, licenses=None, version='0.2.0-rc.7'):
+def build(output, compiler=None, licenses=None, version='0.2.0-rc.8'):
     output = Path(output).resolve()
     if compiler and not licenses:
         raise ValueError('编译安装器前必须提供包含第三方许可与 LGPL 源包的 --licenses 目录')
@@ -60,6 +60,6 @@ if __name__ == '__main__':
     parser.add_argument('--output', required=True)
     parser.add_argument('--iscc', type=Path)
     parser.add_argument('--licenses', type=Path)
-    parser.add_argument('--version', default='0.2.0-rc.7')
+    parser.add_argument('--version', default='0.2.0-rc.8')
     args = parser.parse_args()
     build(args.output, args.iscc, args.licenses, args.version)
