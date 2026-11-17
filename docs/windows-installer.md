@@ -32,6 +32,12 @@ Windows x64、Python 3.13，先安装 `requirements.txt` 和 `requirements-build
 
 输出目录必须不存在。`app/DoubaoMouseBridge/` 是单目录应用；`installer/` 是 EXE 安装器；`application-sha256.json` 是应用文件摘要。不要分发只含主 EXE 而缺少 `_internal/` 的目录。
 
+`packaging/windows-installer.iss` 不在文件里保留版本号兜底值，直接调 ISCC 时必须显式传入 `AppVersion`，否则编译会以 `AppVersion is required` 中止：
+
+```powershell
+ISCC.exe /DAppVersion=0.2.0-rc.7 /DAppSourceDir="app\DoubaoMouseBridge" packaging\windows-installer.iss
+```
+
 构建只复制 `src/` 下的公开 Python 文件，不打包日志、用户配置或虚拟环境。安装版保留原有兼容检查、风险记录和父子构建身份核查；没有通过的检查不会因打包自动解除。
 
 ## 安全自检与验收边界
