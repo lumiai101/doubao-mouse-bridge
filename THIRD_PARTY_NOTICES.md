@@ -9,6 +9,12 @@
 | pystray | Windows系统托盘常驻与右键菜单 | 0.19.5 | LGPLv3，[PyPI](https://pypi.org/project/pystray/0.19.5/)、[源码](https://github.com/moses-palmer/pystray) |
 | pillow | 托盘状态图标图形生成 | 11.3.0 | MIT-CMU，[PyPI](https://pypi.org/project/pillow/11.3.0/)、[官网](https://python-pillow.github.io) |
 | CPython | 运行时，标准库ctypes与tkinter | 实体验收3.13.12 | PSF License等，[许可证说明](https://docs.python.org/3/license.html) |
+| Tcl/Tk | CPython 自带 tkinter 依赖 | 8.6 | BSD 风格，正文随安装器 `licenses/tcl-tk/license.terms` |
+| PyInstaller | 构建期打包工具，不随安装器分发 | 6.22.3 | GPL-2.0 及打包例外条款，[项目](https://github.com/pyinstaller/pyinstaller) |
+| OpenSSL | 随 `_internal/` 分发的 `libcrypto-3-x64.dll`、`libssl-3-x64.dll` | 3.x | Apache-2.0，正文随安装器 `licenses/openssl/LICENSE.txt`，[项目](https://github.com/openssl/openssl) |
+| SQLite | 随 `_internal/` 分发的 `sqlite3.dll` | 3.x | Public Domain，[说明](https://www.sqlite.org/copyright.html) |
+| libffi | 随 `_internal/` 分发的 `libffi-8.dll` | 3.4.x | MIT，[项目](https://github.com/libffi/libffi) |
+| Microsoft Visual C++ 运行时 | 随 `_internal/` 分发的 `VCRUNTIME140.dll`、`VCRUNTIME140_1.dll` | 随 CPython 官方构建 | 微软可再分发运行时，来源为 CPython 官方 Windows 构建，[再分发条款](https://learn.microsoft.com/visualstudio/releasing/msvc-redistributable) |
 | uv | 可选安装工具 | 不随项目分发 | Apache-2.0或MIT，[项目](https://github.com/astral-sh/uv) |
 | 豆包输入法 | 本机录音、识别和上屏 | 已核验0.9.2.7 | 专有软件，许可不由本项目授予 |
 | Logi Options+ | 鼠标快捷键映射 | 用户自行安装 | 专有软件，许可不由本项目授予 |
