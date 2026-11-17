@@ -1,5 +1,23 @@
 # 变更记录
 
+## 0.2.0-rc.8 · 2026-11-18
+
+每用户 Windows 安装程序预发布版。合入窗口、任务栏与 EXE 图标统一（FLOW-141）和第三方许可/源包补项（FLOW-195），把 rc.7 的安装器完整发出来。详见 [rc.8 说明](docs/releases/v0.2.0-rc.8.md)。
+
+1. 窗口、任务栏与 EXE 图标统一：新增 `create_app_icon_image()`、`apply_window_icon()` 与 `write_app_icon()`，标题栏、任务栏按钮与 EXE 内嵌图标（16/32/48/256 像素）都用同一份托盘图形；新增 `scripts/build_windows_app.py`、`scripts/verify_window_icon.py` 与 `tests/test_window_icon.py`。
+2. 第三方许可与 LGPL 源包：`scripts/collect_licenses.py` 按 PyPI 记录的 SHA-256 校验 pynput 与 pystray 源包；随仓固定 `packaging/licenses/Tcl-8.6.txt`，Tcl 与 Tk 正文逐份落盘，Tcl 缺失硬失败；补齐 OpenSSL、MSVC 运行时、SQLite、libffi 的声明。
+3. 版本与清单：`scripts/build_release.py`、`scripts/build_windows.py` 默认版本升至 `0.2.0-rc.8`；`scripts/check_release.py` 公开文件数 57 增至 58。
+
+验证：离线回归 155 项全绿；`scripts/check_release.py` 58 个公开文件通过；`scripts/build_release.py` 58 条目源码包复检通过；本机预构建产出 `DoubaoMouseBridge-0.2.0-rc.8-Setup.exe`，主程序与安装器 EXE 的 16/32/48/256 像素图标与托盘图形零差异。未完成：未做代码签名；实体语音、侧键、登录自启托盘驻留仍待真人现场验收。
+
+## 0.2.0-rc.7 · 2026-11-17
+
+每用户 Inno Setup 安装器源码归档预发布版，只公开源码归档与 SHA-256 清单。详见 [rc.7 说明](docs/releases/v0.2.0-rc.7.md)。
+
+1. 新增 `packaging/windows-installer.iss` 与 `scripts/build_windows.py`：`PrivilegesRequired=lowest`，装到 `%LOCALAPPDATA%\Programs\DoubaoMouseBridge`，不写 HKLM、不注册服务；可选桌面快捷方式与 `--background` 登录自启；卸载由 `unins000.exe` 完成。
+2. 安装器版本号改为命令行 `/DAppVersion` 传入，不留静态兜底值；新增 `tests/test_installer_contract.py` 静态契约测试与 `scripts/collect_licenses.py`。
+3. 完整安装器二进制的发布移到 [rc.8](docs/releases/v0.2.0-rc.8.md)。
+
 ## 0.2.0-rc.6 · 2026-11-15
 
 首个附带一键安装程序的预发布版。修复合并后豆包升级导致“重启即失效”的问题。
@@ -12,19 +30,6 @@
 验证：离线回归 129 项全部通过；`scripts/check_release.py`、`scripts/verify_side_button.py`、`scripts/verify_tray.py`（9 项断言）通过。安装程序内置 EXE 的 SHA-256 为 `dc7aa300acd87383149b815f543b7d6a402cf6b43ccff1337a4ba3f9c8e387dc`，与本机已安装并实测可用的候选二进制一致。
 
 未完成：睡眠唤醒、多显示器、225% 以外缩放比例、长期常驻仍未终验；实体语音出字与免按路径未重跑完整回归；安装程序不写登录启动项、不提供卸载。仍为 prerelease。详见 [rc.6 说明](docs/releases/v0.2.0-rc.6.md)。
-## 未发布 · 窗口、任务栏与 EXE 图标统一（候选）
-
-程序窗口此前没有设置图标，Windows 只能回退到 Tk 的默认羽毛图标，于是标题栏与任务栏按钮显示羽毛形，和托盘图标不一致；EXE 图标此前靠打包命令临场传参，仓库里没有可复跑的依据。本版把三处图标统一到托盘图形本身，不引入第二套图标设计。
-
-1. 新增 `create_app_icon_image()`：复用托盘绘制函数，按 256 像素产出应用图标，托盘图标仍是同一张图的 64 像素版本。
-2. 新增 `apply_window_icon()`：把应用图标交给 Tk 顶层窗口，标题栏与任务栏按钮因此使用同一图标；`main()` 在窗口建好后、显示之前即调用，避免先闪一次默认图标。
-3. 新增 `write_app_icon()` 与 `scripts/build_windows_app.py`：打包前按关键尺寸写出 `.ico`，并以 `--icon` 交给 PyInstaller，打包后就地从 EXE 资源取图标与托盘图形比对不透明像素，比对不过直接失败。
-4. 新增 `scripts/verify_window_icon.py`：在真实 Windows 会话分别取证修复前后，给出标题栏截图与系统实际采用图标的像素报告，四个检查项任一不过即退出码非零。
-5. 新增 `tests/test_window_icon.py` 四项回归：真实窗口图标像素等于托盘图形、应用图标与托盘图形同源、`.ico` 含任务栏与资源管理器所需尺寸、真实 `main()` 会在窗口显示前设置图标。
-6. 更新发布清单指纹与文件表，纳入上述脚本与测试。
-
-未验证：本会话没有交互桌面（无任务栏窗口、屏幕位图抓取失败），任务栏按钮与托盘的实拍截图未取得，只给出系统实际采用图标的像素比对；外壳图标与真实鼠标出字行为不受本版影响，仍待用户侧复核。
-
 ## 0.2.0-rc.5 · 2026-11-10
 
 把 rc.4 之后两笔未发布的本机修复与本日的版本目录选择修复合并为一版可发布的预发布版；下面两条 local 记录保留为历史，内容已被本版覆盖。
