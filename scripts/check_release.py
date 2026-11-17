@@ -30,7 +30,6 @@ FILES = (
     'requirements-build.txt',
 )
 # 仅对 src/doubao_mouse_bridge.py 按 LF 计算指纹，不覆盖 FILES 全集，也不代表实体验收。
-SOURCE_SHA256 = 'e9b407f1f8e653ea61a554474c62696281bd5cbeef5cd7859e173482eb71ba93'
 SOURCE_SHA256 = '7e977918dcbaa95b92ac94ce25a39951a56a55655d65c4a5d95e48be3fe42d66'
 IGNORED_DIRS = {'.git', '.venv', '__pycache__', 'dist', '.claude'}
 PATTERNS = {
